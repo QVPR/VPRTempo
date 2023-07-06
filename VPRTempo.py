@@ -36,8 +36,7 @@ sys.path.append('./output')
 import numpy as np
 import blitnet_open as blitnet
 
-from data_process import preprocess_img, postprocess_img
-from TranSalNet_Dense import TranSalNet
+
 from os import path
 from alive_progress import alive_bar
 
@@ -51,7 +50,6 @@ class snn_model():
         
         # Image and patch normalization settings
         self.dataPath = '/home/adam/data/VPRTempo_training/training_data/' # training datapath
-        self.salPath = '/home/adam/data/VPRTempo_training/spring_saliency_dense/' # saliency calculation datapath
         self.testPath = '/home/adam/data/VPRTempo_training/summer_gamma/' # 
         self.imWidth = 28 # image width for patch norm
         self.imHeight = 28 # image height for patch norm
@@ -65,8 +63,6 @@ class snn_model():
         self.train_img = 400 # number of training images
         self.epoch = 4 # number of training iterations
         self.test_t = 200 # number of testing time points
-        self.saliency = False # saliency calculating of images
-        self.pretrain_saliency = False # use precalculated saliency masks
         self.cuda = torch.device("cuda:0" if torch.cuda.is_available() else "cpu") # saliency calculating on cpu or gpu
         self.T = self.train_img*self.epoch # number of training steps
         self.run_time = self.T*2+self.test_t
@@ -84,7 +80,6 @@ class snn_model():
         
         # Test settings 
         self.test_true = False # leave default to False
-        self.train_true = False # leave default to False
         
         # Print network details
         print('////////////')
@@ -102,13 +97,6 @@ class snn_model():
         with open('./nordland_imageNames.txt') as file:
             lines = [line.rstrip() for line in file]
         self.img_load = lines
-    
-    # Load images from datapath
-    def loadImg(self):
-        # read and convert image from BGR to RGB 
-        self.img = cv2.imread(self.fullpath)[:,:,::-1]
-        if self.pretrain_saliency:
-            self.sal = cv2.imread(self.salpath)[:,:,::-1]
   
     # Get the 2D patches or the patch normalization
     def get_patches2D(self):
@@ -146,85 +134,18 @@ class snn_model():
     
     # Process the loaded images - resize, normalize color, & patch normalize
     def processImage(self):
-        
-        def saliency(self):
-            # convert image and saliency map
-            self.img = cv2.cvtColor(self.img,cv2.COLOR_RGB2GRAY)
             
-            if self.pretrain_saliency:
-                # convert image to RGB
-                self.sal = cv2.cvtColor(self.sal,cv2.COLOR_RGB2GRAY)
-            
-            # filter saliency pixels < certain value
-            #self.sal = self.sal-((np.mean(self.sal)/np.std(self.sal))+np.median(self.sal))
-            #self.sal[self.sal<10] = 0
-            
-            # reshape 2D images into 1D vector
-            imgX = len(self.img[0])
-            imgY = len(self.img[1])
-            salX = len(self.sal[0])
-            salY = len(self.sal[1])
-            self.img = np.reshape(self.img,(imgX*imgY,))
-            self.sal = np.reshape(self.sal,(salX*salY,))
-            
-            #if not self.test_true:
-            #self.sal = ((self.sal-np.mean(self.sal))/np.std(self.sal))
-           # self.sal[self.sal<0] = 0
-            
-            # find where saliency map = 0 and remove equivelant pixels from image
-            index = np.where(self.sal==0)
-            self.img[tuple(index)] = 0
-            self.img = np.reshape(self.img,(imgX,imgY))
-        
-        def resize_patch(self):
-            
-            # resize image to 28x28 and patch normalize        
-            self.img = cv2.resize(self.img,(self.imWidth, self.imHeight))
-            self.patch_normalise_pad() 
-            self.img = np.uint8(255.0 * (1 + self.im_norm) / 2.0)
-        
-        if self.saliency and self.pretrain_saliency: # if use precalculated saliency maps
-            
-            # run saliency processing
-            saliency(self)
-            # run patch normalization
-            resize_patch(self)
-        
-        elif self.saliency: # if not using precalculated saliency maps
-            
-            # preprocess image
-            self.sal = preprocess_img(self.img)
-            self.sal = np.array(self.sal)/255.
-            self.sal = np.expand_dims(np.transpose(self.sal,(2,0,1)),axis=0)
-            
-            # convert numpy array to torch
-            self.sal = torch.from_numpy(self.sal)
-            self.sal = self.sal.type(torch.FloatTensor).to(self.cuda)
-            
-            # run model and make predictions
-            pred_saliency = self.model(self.sal)
-            toPIL = transforms.ToPILImage()
-            pic = toPIL(pred_saliency.squeeze())
-            self.sal = postprocess_img(pic,self.img)
-            
-            # run saliency processing
-            saliency(self)
-            # run patch normalization
-            resize_patch(self)
-            
-        else: # if not using any saliency mapping
-            # convert image
-            self.img = cv2.cvtColor(self.img,cv2.COLOR_RGB2GRAY)
-            # run patch normalization
-            resize_patch(self)
+        # resize image to 28x28 and patch normalize        
+        self.img = cv2.resize(self.img,(self.imWidth, self.imHeight))
+        self.patch_normalise_pad() 
+        self.img = np.uint8(255.0 * (1 + self.im_norm) / 2.0)
+
         
     # Image loader function - runs all image import functions
     def loadImages(self):
             
          if self.test_true:
             self.dataPath = self.testPath
-            if self.pretrain_saliency: 
-                self.salPath = '/home/adam/data/VPRTempo_training/spring_saliency_dense/'
         
          self.ims = []
          self.ids = []
@@ -232,9 +153,10 @@ class snn_model():
 
          for m in self.img_load:
              self.fullpath = self.dataPath+m
-             if self.pretrain_saliency:
-                 self.salpath = self.salPath+m
-             self.loadImg()
+             # read and convert image from BGR to RGB 
+             self.img = cv2.imread(self.fullpath)[:,:,::-1]
+             # convert image
+             self.img = cv2.cvtColor(self.img,cv2.COLOR_RGB2GRAY)
              self.processImage()
              self.ims.append(self.img)
              self.ids.append(m)
@@ -242,9 +164,6 @@ class snn_model():
         # pickle image ids to keep track of shuffling    
          if self.test_true:
             with open('./output/test_ids.pkl','wb') as f:
-                pickle.dump(self.ids,f)
-         elif self.train_true:
-            with open('./output/traintest_ids.pkl','wb') as f:
                 pickle.dump(self.ids,f)
          else:
             with open('./output/train_ids.pkl','wb') as f:
@@ -279,16 +198,6 @@ class snn_model():
                                             str(self.feature_layer)+\
                                         'f'+str(self.output_layer)+\
                                             'o'+str(self.epoch)+'.pkl'
-                                            
-        # pre-load TranSalNet model if saliency is selected        
-        if self.saliency: 
-            
-            # load TranSalNet model
-            print("Creating TranSalNet model")
-            self.model = TranSalNet()
-            self.model.load_state_dict(torch.load(r'TranSalNet_Dense.pth'))
-            self.model = self.model.to(self.cuda)
-            self.model.eval()
                                         
         # set the input spikes
         def set_spikes():
@@ -305,6 +214,31 @@ class snn_model():
             spikeTimes = np.array(spikeTimes)
             # set input spikes
             blitnet.setSpikeTimes(net,0,spikeTimes)
+            
+        def train_feature():     
+            # Train the feature layer
+            for t in range(int(self.T/10)):
+                blitnet.runSim(net,10)
+                # anneal learning rates
+                if np.mod(t,10)==0:
+                    pt = pow(float(self.T-t)/self.T,self.annl_pow)
+                    net['eta_ip'][fLayer] = self.n_itp*pt
+                    net['eta_stdp'][ex_weight[-1]] = self.n_init*pt
+                    net['eta_stdp'][inh_weight[-1]] = -1*self.n_init*pt
+                yield
+        
+        def train_output():
+            # Train the layer
+            for t in range(self.T):
+                
+                blitnet.runSim(net,1)
+                # Anneal learning rates
+                if np.mod(t,10)==0:
+                    pt = pow(float(self.T-t)/(self.T),self.annl_pow)
+                    net['eta_ip'][oLayer] = self.n_itp*pt
+                    net['eta_stdp'][ex_weight[-1]] = self.n_init*pt
+                    net['eta_stdp'][inh_weight[-1]] = -1*self.n_init*pt
+                yield
         
         if not path.exists(training_out):
             
@@ -338,23 +272,6 @@ class snn_model():
             with alive_bar(len(self.spike_rates)) as sbar:
                 for i in set_spikes():
                     sbar()
-            
-            def train_feature():     
-                # Train the feature layer
-                for t in range(int(self.T/10)):
-                    blitnet.runSim(net,10)
-                    # anneal learning rates
-                    if np.mod(t,10)==0:
-                        pt = pow(float(self.T-t)/self.T,self.annl_pow)
-                        net['eta_ip'][fLayer] = self.n_itp*pt
-                        net['eta_stdp'][ex_weight[-1]] = self.n_init*pt
-                        net['eta_stdp'][inh_weight[-1]] = -1*self.n_init*pt
-                    yield
-            
-            print('Training the feature layer')
-            with alive_bar(int(self.T/10)) as fbar:
-                for i in train_feature():
-                    fbar()
                         
             # Turn off learning
             net['eta_ip'][fLayer] = 0.0
@@ -388,19 +305,6 @@ class snn_model():
             append_spks[:,0] += self.T
             
             blitnet.setSpikeTimes(net,oLayer,append_spks)
-            
-            def train_output():
-                # Train the layer
-                for t in range(self.T):
-                    
-                    blitnet.runSim(net,1)
-                    # Anneal learning rates
-                    if np.mod(t,10)==0:
-                        pt = pow(float(self.T-t)/(self.T),self.annl_pow)
-                        net['eta_ip'][oLayer] = self.n_itp*pt
-                        net['eta_stdp'][ex_weight[-1]] = self.n_init*pt
-                        net['eta_stdp'][inh_weight[-1]] = -1*self.n_init*pt
-                    yield
                         
             print('Training the output layer')
             with alive_bar(self.T) as outbar:
