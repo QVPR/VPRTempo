@@ -215,7 +215,7 @@ class snn_model():
                     spikeTimes.extend(spike_neuron)
                     yield
                 
-                spikeTimes = np.array(spikeTimes)
+                spikeTimes = torch.from_numpy(np.array(spikeTimes))
                 # set input spikes
                 blitnet.setSpikeTimes(net,0,spikeTimes)
             
@@ -313,7 +313,7 @@ class snn_model():
             for n in range(self.epoch):
                 out_spks[:,0] += self.output_layer
     
-                append_spks= np.concatenate((append_spks,out_spks),axis=0)
+                append_spks= torch.from_numpy(np.concatenate((append_spks,out_spks),axis=0))
             
             # Set the output spikes (spike forcing)
             append_spks[:,0] += self.T
@@ -324,12 +324,12 @@ class snn_model():
             with alive_bar(self.T) as outbar:
                 for i in train_output():
                     outbar()
-            blitnet.plotSpikes(net,0)
+
             # Turn off learning
             net['eta_ip'][oLayer] = 0.0
             net['eta_stdp'][ex_weight[-1]] = 0.0
             net['eta_stdp'][inh_weight[-1]] = 0.0
-            blitnet.plotSpikes(net,0)
+
             # Clear the network output spikes
             blitnet.setSpikeTimes(net,oLayer,[])
             
@@ -364,7 +364,7 @@ class snn_model():
                 spikeTimes.extend(spike_neuron)
                 yield
             
-            spikeTimes = np.array(spikeTimes)
+            spikeTimes = torch.from_numpy(np.array(spikeTimes))
             # set input spikes
             blitnet.setSpikeTimes(net,0,spikeTimes)
             
