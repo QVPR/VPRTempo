@@ -1,0 +1,8 @@
+Trained networks will appear in this folder as a pickled Python dictionary (.pkl). The naming takes the following format:
+# xxxi - number of neurons in the input (i) layer
+# xxxxf - number of neurons in the feature (f) layer
+# xxxo - number of neurons in the output (o) layer
+# X - number of training epochs
+
+Which will look something like - xxxixxxfxxxoX.pkl
+An example trained network would be - 784i5488f400o4.pkl

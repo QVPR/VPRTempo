@@ -26,7 +26,6 @@ Imports
 import cv2
 import pickle
 import torch
-import random
 import sys
 sys.path.append('./src')
 sys.path.append('./weights')
@@ -35,7 +34,6 @@ sys.path.append('./output')
 
 import numpy as np
 import blitnet_open as blitnet
-
 
 from os import path
 from alive_progress import alive_bar
@@ -50,7 +48,7 @@ class snn_model():
         
         # Image and patch normalization settings
         self.dataPath = '/home/adam/data/VPRTempo_training/training_data/' # training datapath
-        self.testPath = '/home/adam/data/VPRTempo_training/summer_gamma/' # 
+        self.testPath = '/home/adam/data/VPRTempo_training/summer_gamma/' 
         self.imWidth = 28 # image width for patch norm
         self.imHeight = 28 # image height for patch norm
         self.num_patches = 7 # number of patches
@@ -65,8 +63,8 @@ class snn_model():
         self.test_t = 200 # number of testing time points
         self.cuda = torch.device("cuda:0" if torch.cuda.is_available() else "cpu") # saliency calculating on cpu or gpu
         self.T = self.train_img*self.epoch # number of training steps
-        self.run_time = self.T*2+self.test_t
         self.annl_pow = 2 # learning rate anneal power
+        self.location_repeat = 2 # Number of training locations that are the same
         
         # Hyperparamters
         self.theta_max = 0.25 # maximum threshold value
@@ -93,10 +91,16 @@ class snn_model():
         print('Inhibitory p: '+str(self.p_inh))
         print('Constant input '+str(self.c))
         
-        # select training images from list
+        # Select training images from list
         with open('./nordland_imageNames.txt') as file:
             lines = [line.rstrip() for line in file]
         self.img_load = lines
+        
+        # Network weights name
+        self.training_out = './weights/'+str(self.input_layer)+'i'+\
+                                            str(self.feature_layer)+\
+                                        'f'+str(self.output_layer)+\
+                                            'o'+str(self.epoch)+'.pkl'
   
     # Get the 2D patches or the patch normalization
     def get_patches2D(self):
@@ -175,16 +179,13 @@ class snn_model():
          self.num_examples = num_testing_imgs
          n_input = self.imWidth * self.imHeight 
          
+         # Set the spike rates based on the number of example training images
          self.spike_rates = []
          self.init_rates = []
-         print('Converting images to spikes')
          for jdx, j in enumerate(range(int(self.num_examples))):    
              self.init_rates.append((data['x'][j%num_testing_imgs,:,:].reshape((n_input))/self.intensity))  
-
          for n in range(int(self.epoch)): 
-
              self.spike_rates.extend(self.init_rates)
-
          if not self.test_true:
              self.spike_rates.extend(self.spike_rates)
     
@@ -193,12 +194,164 @@ class snn_model():
     '''
     def run_train(self):
         
-        # network weights name
-        training_out = './weights/'+str(self.input_layer)+'i'+\
-                                            str(self.feature_layer)+\
-                                        'f'+str(self.output_layer)+\
-                                            'o'+str(self.epoch)+'.pkl'
-                                        
+        # Check if pre-trained network exists, prompt if retrain or run
+        if path.isfile(self.training_out):
+            retrain = input("A network with these parameters exists, re-train weights? (y/n):\n")
+        else:
+            retrain = 'y'
+        
+        # Guard function to prevent training network if user selects 'y' or net doesn't exist
+        if retrain != 'n':        
+                       
+            # Sets the input spikes into the BlitNet network
+            def set_spikes():
+                spikeTimes = []
+                for n, ndx in enumerate(self.spike_rates):
+                    nz_indicies = np.nonzero(ndx)
+                    tempspikes = ndx[nz_indicies[0]]
+                    tempspikes[tempspikes>=1] = 0.999
+                    spiketime = (n+1)+tempspikes
+                    spike_neuron = (np.column_stack((spiketime,nz_indicies[0]))).tolist()
+                    spikeTimes.extend(spike_neuron)
+                    yield
+                
+                spikeTimes = np.array(spikeTimes)
+                # set input spikes
+                blitnet.setSpikeTimes(net,0,spikeTimes)
+            
+            # Function to run BlitNet training for the feature layer   
+            def train_feature():     
+                # Train the feature layer
+                for t in range(int(self.T/10)):
+                    blitnet.runSim(net,10)
+                    # anneal learning rates
+                    if np.mod(t,10)==0:
+                        pt = pow(float(self.T-t)/self.T,self.annl_pow)
+                        net['eta_ip'][fLayer] = self.n_itp*pt
+                        net['eta_stdp'][ex_weight[-1]] = self.n_init*pt
+                        net['eta_stdp'][inh_weight[-1]] = -1*self.n_init*pt
+                    yield
+            
+            # Function to run BlitNet training for the output layer
+            def train_output():
+                # Train the layer
+                for t in range(self.T):
+                    
+                    blitnet.runSim(net,1)
+                    # Anneal learning rates
+                    if np.mod(t,10)==0:
+                        pt = pow(float(self.T-t)/(self.T),self.annl_pow)
+                        net['eta_ip'][oLayer] = self.n_itp*pt
+                        net['eta_stdp'][ex_weight[-1]] = self.n_init*pt
+                        net['eta_stdp'][inh_weight[-1]] = -1*self.n_init*pt
+                    yield
+             
+            # Load the network training images and set the input spikes     
+            self.loadImages()
+            
+            # create new network
+            print("Creating network layers")
+            net = blitnet.newNet()
+            iLayer = blitnet.addLayer(net,[self.input_layer,1],0.0,0.0,0.0,0.0,0.0,
+                                                                 False)   
+            fLayer = blitnet.addLayer(net,[self.feature_layer,1],[0,self.theta_max],
+                                      [self.f_rate[0],self.f_rate[1]],self.n_itp,
+                                      [0,self.c],0,False)
+            # sequentially set the feature firing rates
+            fstep = (self.f_rate[1]-self.f_rate[0])/self.feature_layer
+            for i in range(self.feature_layer):
+                net['fire_rate'][fLayer][i] = self.f_rate[0]+fstep*(i+1)
+                
+            # create the excitatory and inhibitory connections
+            
+            # Excitatory weights
+            idx = blitnet.addWeights(net,iLayer,fLayer,[0,1],self.p_exc,self.n_init, False)
+            ex_weight = []
+            ex_weight.append(idx)
+            
+            # Inhibitory weights
+            inh_weight = []
+            idx = blitnet.addWeights(net,iLayer,fLayer,[-1,0],self.p_inh,self.n_init,False)
+            inh_weight.append(idx)            
+            
+            # Set the spikes times for the input images
+            print('Setting spike times')
+            with alive_bar(len(self.spike_rates)) as sbar:
+                for i in set_spikes():
+                    sbar()
+            
+            # Train the input to feature layer
+            print('Training the feature layer')
+            with alive_bar(int(self.T/10)) as fbar:
+                for i in train_feature():
+                    fbar()
+                        
+            # Turn off learning between input and feature layer
+            net['eta_ip'][fLayer] = 0.0
+            if self.p_exc > 0.0: net['eta_stdp'][ex_weight[-1]] = 0.0
+            if self.p_inh > 0.0: net['eta_stdp'][inh_weight[-1]] = 0.0
+            
+            # Create and train the output layer with the feature layer
+            oLayer = blitnet.addLayer(net,[self.output_layer,1],0.0,0.0,0.0,0.0,0.0,False)
+
+            # Add the excitatory connections
+            idx = blitnet.addWeights(net,fLayer,oLayer,[0.0,1.0],1.0,self.n_init,False)
+            ex_weight.append(idx)
+            
+            # Add the inhibitory connections
+            idx = blitnet.addWeights(net,fLayer,oLayer,[-1.0,0.0],1.0,-self.n_init,False)
+            inh_weight.append(idx)
+            
+            # Output spikes for spike forcing (final layer)
+            out_spks = np.zeros([(self.output_layer),2])
+            append_spks = np.zeros([(self.output_layer),2])
+    
+            for n in range(self.output_layer):
+                out_spks[n] = [(n)+1.5,n]
+                append_spks[n] = [(n)+1.5,n]
+                
+            for n in range(self.epoch):
+                out_spks[:,0] += self.output_layer
+    
+                append_spks= np.concatenate((append_spks,out_spks),axis=0)
+            
+            # Set the output spikes (spike forcing)
+            append_spks[:,0] += self.T
+            blitnet.setSpikeTimes(net,oLayer,append_spks)
+            
+            # Train the feature to output layer            
+            print('Training the output layer')
+            with alive_bar(self.T) as outbar:
+                for i in train_output():
+                    outbar()
+            blitnet.plotSpikes(net,0)
+            # Turn off learning
+            net['eta_ip'][oLayer] = 0.0
+            net['eta_stdp'][ex_weight[-1]] = 0.0
+            net['eta_stdp'][inh_weight[-1]] = 0.0
+            blitnet.plotSpikes(net,0)
+            # Clear the network output spikes
+            blitnet.setSpikeTimes(net,oLayer,[])
+            
+            # Reset network details
+            net['set_spks'][0] = []
+            net['rec_spks'] = [True,True,True]
+            net['sspk_idx'] = [0,0,0]
+            net['step_num'] = 0
+            net['spikes'] = [[],[],[]]
+            
+            # Output the trained network
+            if self.pickler:
+                print('Pickling trained network')
+                with open(self.training_out, 'wb') as f:
+                    pickle.dump(net, f)
+            
+    '''
+     Run the testing network
+     '''
+
+    def networktester(self):
+        
         # set the input spikes
         def set_spikes():
             spikeTimes = []
@@ -215,236 +368,67 @@ class snn_model():
             # set input spikes
             blitnet.setSpikeTimes(net,0,spikeTimes)
             
-        def train_feature():     
-            # Train the feature layer
-            for t in range(int(self.T/10)):
-                blitnet.runSim(net,10)
-                # anneal learning rates
-                if np.mod(t,10)==0:
-                    pt = pow(float(self.T-t)/self.T,self.annl_pow)
-                    net['eta_ip'][fLayer] = self.n_itp*pt
-                    net['eta_stdp'][ex_weight[-1]] = self.n_init*pt
-                    net['eta_stdp'][inh_weight[-1]] = -1*self.n_init*pt
-                yield
-        
-        def train_output():
-            # Train the layer
-            for t in range(self.T):
-                
+        def test_network():
+            # Test the output
+            self.correct_idx = []
+            self.numcorrect = 0
+            for t in range(self.test_t):
                 blitnet.runSim(net,1)
-                # Anneal learning rates
-                if np.mod(t,10)==0:
-                    pt = pow(float(self.T-t)/(self.T),self.annl_pow)
-                    net['eta_ip'][oLayer] = self.n_itp*pt
-                    net['eta_stdp'][ex_weight[-1]] = self.n_init*pt
-                    net['eta_stdp'][inh_weight[-1]] = -1*self.n_init*pt
-                yield
-        
-        if not path.exists(training_out):
-            
-            self.loadImages()
-            
-            # create new network
-            print("Creating network layers")
-            net = blitnet.newNet()
-            iLayer = blitnet.addLayer(net,[self.input_layer,1],0.0,0.0,0.0,0.0,0.0,
-                                                                 False)        
-            fLayer = blitnet.addLayer(net,[self.feature_layer,1],[0,self.theta_max],
-                                      [self.f_rate[0],self.f_rate[1]],self.n_itp,
-                                      [0,self.c],0,False)
-            # sequentially set the feature firing rates
-            fstep = (self.f_rate[1]-self.f_rate[0])/self.feature_layer
-            for i in range(self.feature_layer):
-                net['fire_rate'][fLayer][i] = self.f_rate[0]+fstep*(i+1)
-                
-            # create the excitatory and inhibitory connections
-            idx = blitnet.addWeights(net,iLayer,fLayer,[0,1],self.p_exc,self.n_init,
-                                                                             False)
-            ex_weight = []
-            ex_weight.append(idx)
-            inh_weight = []
-
-            idx = blitnet.addWeights(net,iLayer,fLayer,[-1,0],self.p_inh,self.n_init,
-                                                                             False)
-            inh_weight.append(idx)            
-            
-            print('Setting spike times')
-            with alive_bar(len(self.spike_rates)) as sbar:
-                for i in set_spikes():
-                    sbar()
-                        
-            # Turn off learning
-            net['eta_ip'][fLayer] = 0.0
-            if self.p_exc > 0.0: net['eta_stdp'][ex_weight[-1]] = 0.0
-            if self.p_inh > 0.0: net['eta_stdp'][inh_weight[-1]] = 0.0
-            
-            oLayer = blitnet.addLayer(net,[self.output_layer,1],0.0,0.0,0.0,0.0,0.0,
-                                                                 False)
-        
-            # Train the output layer
-            # Add the excitatory and balancing inhib connections
-            idx = blitnet.addWeights(net,fLayer,oLayer,[0.0,1.0],1.0,self.n_init,False)
-            ex_weight.append(idx)
-            idx = blitnet.addWeights(net,fLayer,oLayer,[-1.0,0.0],1.0,-self.n_init,False)
-            inh_weight.append(idx)
-            
-            # Output spikes for spike forcing (final layer)
-            out_spks = np.zeros([(self.output_layer),2])
-            append_spks = np.zeros([(self.output_layer),2])
-
-            for n in range(self.output_layer):
-                out_spks[n] = [(n)+1.5,n]
-                append_spks[n] = [(n)+1.5,n]
-                
-            for n in range(self.epoch):
-                out_spks[:,0] += self.output_layer
-
-                append_spks= np.concatenate((append_spks,out_spks),axis=0)
-            
-            # Set the output spikes (spike forcing)
-            append_spks[:,0] += self.T
-            
-            blitnet.setSpikeTimes(net,oLayer,append_spks)
-                        
-            print('Training the output layer')
-            with alive_bar(self.T) as outbar:
-                for i in train_output():
-                    outbar()
-            blitnet.plotSpikes(net,0)
-            # Turn off learning
-            net['eta_ip'][oLayer] = 0.0
-            net['eta_stdp'][ex_weight[-1]] = 0.0
-            net['eta_stdp'][inh_weight[-1]] = 0.0
-            
-            # Clear the network output spikes
-            blitnet.setSpikeTimes(net,oLayer,[])
-            if self.pickler:
-                print('Pickling trained network')
-                with open(training_out, 'wb') as f:
-                    pickle.dump(net, f)
-            print('Training done in '+str(self.T)+' computations')
-            
-        else:
-            print('Unpickling '+training_out)
-            with open(training_out, 'rb') as f:
-                net = pickle.load(f)
-                
-        '''
-         Run the testing network
-         '''
-        self.epoch = 1
-        def networktester(self):
-
-            self.loadImages()
-            
-            print('Setting spike times')
-            with alive_bar(len(self.spike_rates)) as sbar:
-                for i in set_spikes():
-                    sbar()
-            
-            net['rec_spks'] = [True,True,True]
-            net['sspk_idx'] = [0,0,0]
-            net['step_num'] = 0
-            net['spikes'] = [[],[],[]]
-            
-            # load the training and testing IDs for correct matching
-            with open('./output/train_ids.pkl', 'rb') as f:
-                train_ids = pickle.load(f)      
-            if self.train_true:
-                with open('./output/traintest_ids.pkl', 'rb') as f:
-                    test_ids = pickle.load(f)  
-            if self.test_true:
-                with open('./output/test_ids.pkl', 'rb') as f:
-                    test_ids = pickle.load(f)  
-                
-            def test_network():
-                # Test the output
-                self.correct_idx = []
-                self.numcorrect = 0
-                for t in range(self.test_t):
-                    blitnet.runSim(net,1)
-                    nidx = np.argmax(net['x'][-1]) 
-                    if nidx < 200:
-                        if  train_ids[nidx] == test_ids[t] or train_ids[(nidx+200)] == test_ids[t]:
-                            self.numcorrect = self.numcorrect+1
-                            self.correct_idx.append(t)
-                    else:
-                        if train_ids[nidx] == test_ids[t] or train_ids[(nidx-200)] == test_ids[t]:
-                            self.numcorrect = self.numcorrect+1
-                            self.correct_idx.append(t)
-                   
-                    yield
-    
-            with alive_bar(self.test_t) as testbar:
-                for i in test_network():
-                    testbar()
-                    
-            spkforc = 100*self.numcorrect/self.test_t
-            print(spkforc,'% correct')
-            
-            # If using grid searching function, pick the conditions that give 
-            # the best performance
-            if self.grid_searching and self.test_true:
-                if self.settings['optimisation'] == 'thetaconst':
-                    output_path = './output/thetaconst.pkl'
-                    with open(output_path, 'rb') as f:
-                        thetaconst = pickle.load(f)
-                    
-                    if spkforc > thetaconst[2]:
-                        condition = [self.theta_max,self.c,spkforc]
-                        with open(output_path, 'wb') as f:
-                            pickle.dump(condition, f)
-                
-                elif self.settings['optimisation'] == 'firing':
-                    output_path = './output/firing.pkl'
-                    with open(output_path, 'rb') as f:
-                        firing = pickle.load(f)
-                    
-                    if spkforc > firing[2]:
-                        condition = [self.f_rate[0],self.f_rate[1],spkforc]
-                        with open(output_path, 'wb') as f:
-                            pickle.dump(condition, f)
-                    
-                elif self.settings['optimisation'] == 'excinh':
-                    output_path = './output/excinh.pkl'
-                    with open(output_path, 'rb') as f:
-                        excinh = pickle.load(f)
-                    
-                    if spkforc > excinh[2]:
-                        condition = [self.p_exc,self.p_inh,spkforc]
-                        with open(output_path, 'wb') as f:
-                            pickle.dump(condition, f)
-                
+                nidx = np.argmax(net['x'][-1]) 
+                if nidx < 200:
+                    if  train_ids[nidx] == test_ids[t] or train_ids[(nidx+int(self.train_img/self.location_repeat))] == test_ids[t]:
+                        self.numcorrect = self.numcorrect+1
+                        self.correct_idx.append(t)
                 else:
-                    output_path = './output/learningrate.pkl'
-                    with open(output_path, 'rb') as f:
-                        learningrate = pickle.load(f)
-                    
-                    if spkforc > learningrate[2]:
-                        condition = [self.n_init,self.n_itp,spkforc]
-                        with open(output_path, 'wb') as f:
-                            pickle.dump(condition, f)
+                    if train_ids[nidx] == test_ids[t] or train_ids[(nidx-int(self.train_img/self.location_repeat))] == test_ids[t]:
+                        self.numcorrect = self.numcorrect+1
+                        self.correct_idx.append(t)
+               
+                yield
+                
+        # Unpickle the stored network
+        print('Unpickling '+self.training_out)
+        if path.isfile(self.training_out):
+            with open(self.training_out, 'rb') as f:
+                 net = pickle.load(f)
+        else:
+            raise Exception("Network does not exist in this configuration, please train the network first")
         
-        #print('Running training dataset on trained network')
+        # Reset number of epochs to 1 to run testing network once
+        self.epoch = 1
+        
+        # Load the testing images
         with open('./nordland_testNames.txt') as file:
             lines = [line.rstrip() for line in file]
         self.img_load = lines
-        self.train_true = True
-        networktester(self)
-        blitnet.plotSpikes(net,0)
-        self.train_true = False
-
-        self.test_true = True
+        self.test_true = True # Set image path to the testing images
+        self.loadImages()
+        
+        # Set input layer spikes as the testing images
+        print('Setting spike times')
+        with alive_bar(len(self.spike_rates)) as sbar:
+            for i in set_spikes():
+                sbar()
+        
+        # load the training and testing IDs for correct matching
+        with open('./output/train_ids.pkl', 'rb') as f:
+            train_ids = pickle.load(f)      
+        with open('./output/test_ids.pkl', 'rb') as f:
+            test_ids = pickle.load(f)  
+            
         print('Running testing dataset on trained network')
-
-        random.shuffle(self.img_load)
-        networktester(self)
+        with alive_bar(self.test_t) as testbar:
+            for i in test_network():
+                testbar()
+                
+        spkforc = 100*self.numcorrect/self.test_t
+        print(spkforc,'% correct')
         blitnet.plotSpikes(net,0)
-        pause=1
 
 '''
 Run the network
 '''        
 if __name__ == "__main__":
-    model = snn_model()
-    model.run_train()
+    model = snn_model() # Instantiate model
+    model.run_train() # Run the training network
+    model.networktester() # Run the testing network
