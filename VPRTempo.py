@@ -26,6 +26,7 @@ Imports
 import cv2
 import pickle
 import torch
+import gc
 import sys
 sys.path.append('./src')
 sys.path.append('./weights')
@@ -55,7 +56,7 @@ class snn_model():
         self.intensity = 255 # divide pixel values to get spikes in range [0,1]
         
         # Network and training settings
-        self.input_layer = 784 # number of input layer neurons
+        self.input_layer = (self.imWidth*self.imHeight) # number of input layer neurons
         self.feature_layer = int(self.input_layer*7)# number of feature layer neurons
         self.output_layer = 400 # number of output layer neurons (match training images)
         self.train_img = 400 # number of training images
@@ -81,7 +82,8 @@ class snn_model():
         
         # Print network details
         print('////////////')
-        print('Running VPRTempo v0.1 - Queensland University of Technology, Centre for Robotics')
+        print('VPRTempo - Temporally Encoded Visual Place Recognition v0.1')
+        print('Queensland University of Technology, Centre for Robotics')
         print('\\\\\\\\\\\\\\\\\\\\\\\\')
         print('Theta: '+str(self.theta_max))
         print('Initial learning rate: '+str(self.n_init))
@@ -90,6 +92,9 @@ class snn_model():
         print('Excitatory p: '+str(self.p_exc))
         print('Inhibitory p: '+str(self.p_inh))
         print('Constant input '+str(self.c))
+        print('CUDA available: '+str(torch.cuda.is_available()))
+        current_device = torch.cuda.current_device()
+        print('Current device is: '+str(torch.cuda.get_device_name(current_device)))
         
         # Select training images from list
         with open('./nordland_imageNames.txt') as file:
@@ -335,7 +340,7 @@ class snn_model():
             
             # Reset network details
             net['set_spks'][0] = []
-            net['rec_spks'] = [True,True,True]
+            #net['rec_spks'] = [True,True,True]
             net['sspk_idx'] = [0,0,0]
             net['step_num'] = 0
             net['spikes'] = [[],[],[]]
@@ -423,7 +428,12 @@ class snn_model():
                 
         spkforc = 100*self.numcorrect/self.test_t
         print(spkforc,'% correct')
-        blitnet.plotSpikes(net,0)
+        if net['set_spks'][0] == True:
+            blitnet.plotSpikes(net,0)
+        
+        # clear the CUDA cache
+        torch.cuda.empty_cache()
+        gc.collect()
 
 '''
 Run the network
