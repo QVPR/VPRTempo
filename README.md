@@ -9,33 +9,36 @@ This repository contains code for VPRTempo, a neural network that uses temporall
 This repository is licensed under the [MIT License](./LICENSE)
 
 ## Installation and setup
-We recommend using [Mambaforge](https://mamba.readthedocs.io/en/latest/installation.html) to install all package dependicies. VPRTempo uses [PyTorch](https://pytorch.org/) and has the capability for [CUDA](https://developer.nvidia.com/cuda-toolkit) GPU acceleration. Follow the installation instructions based on your operating system.
+Dependencies for VPRTempo can be installed with Conda, however we strongly recommend using [Mambaforge](https://mamba.readthedocs.io/en/latest/installation.html). VPRTempo uses [PyTorch](https://pytorch.org/) and has the capability for [CUDA](https://developer.nvidia.com/cuda-toolkit) GPU acceleration. Follow the installation instructions based on your operating system.
 > **Note**
 > CUDA acceleration is not available on MacOS and the network will only use the CPU.
 ### Windows & Linux
-#### Option 1 - CUDA enabled GPU acceleration
+#### CUDA enabled installation
 ```console
-$ mamba create -n vprtempo -c conda-forge python opencv matplotlib alive-progress -c pytorch -c nvidia torchvision torchaudio pytorch-cuda=11.7
+conda create -n vprtempo -c pytorch -c nvidia python torchvision torchaudio pytorch-cuda=11.7 opencv matplotlib alive-progress
 ```
-#### Option 2 - CPU only
+> **Note**
+> Install the version of CUDA that is compatible with your graphics card.
+#### CPU only
 ```console
-$ mamba create -n vprtempo -c conda-forge python opencv matplotlib alive-progress -c pytorch pytorch torchvision torchaudio cpuonly
-```
-Once the environment has been created, activate it and download the repository.
-```console
-$ mamba activate vprtempo
-$ git clone https://github.com/QVPR/VPRTempo.git
-$ cd ~/VPRTempo
+conda create -n vprtempo python pytorch torchvision torchaudio cpuonly opencv matplotlib alive-progress -c pytorch
 ```
 ### MacOS
 ```console
-$ mamba create -n vprtempo -c conda-forge python opencv matplotlib alive-progress -c pytorch pytorch::pytorch torchvision torchaudio
+conda create -n vprtempo -c conda-forge python opencv matplotlib alive-progress -c pytorch pytorch::pytorch torchvision torchaudio
 ```
 Once the environment has been created, activate it and download the repository.
 ```console
-$ mamba activate vprtempo
-$ git clone https://github.com/QVPR/VPRTempo.git
-$ cd ~/VPRTempo
+conda install pytorch::pytorch torchvision torchaudio opencv matplotlib alive-progress -c pytorch
+```
+### Get the repository
+Activate the environment
+```console
+conda activate vprtempo
+```
+Download the repository
+```console
+git clone https://github.com/QVPR/VPRTempo.git
 ```
 ### Datasets
 VPRTempo was developed and tested using the [Nordland](https://webdiis.unizar.es/~jmfacil/pr-nordland/#download-dataset) dataset. Details on training and testing images are described below.
