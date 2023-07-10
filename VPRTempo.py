@@ -1,6 +1,6 @@
 #MIT License
 
-#Copyright (c) 2023 Adam Hines
+#Copyright (c) 2023 Adam Hines, Michael Milford, Tobias Fischer
 
 #Permission is hereby granted, free of charge, to any person obtaining a copy
 #of this software and associated documentation files (the "Software"), to deal
@@ -35,6 +35,8 @@ sys.path.append('./output')
 
 import numpy as np
 import blitnet_open as blitnet
+import validation as validate
+import matplotlib.pyplot as plt
 
 from os import path
 from alive_progress import alive_bar
@@ -55,11 +57,16 @@ class snn_model():
         self.num_patches = 7 # number of patches
         self.intensity = 255 # divide pixel values to get spikes in range [0,1]
         
+        # Select training images from list
+        with open('./nordland_imageNames.txt') as file:
+            lines = [line.rstrip() for line in file]
+        self.img_load = lines
+        
         # Network and training settings
         self.input_layer = (self.imWidth*self.imHeight) # number of input layer neurons
         self.feature_layer = int(self.input_layer*7)# number of feature layer neurons
-        self.output_layer = 400 # number of output layer neurons (match training images)
-        self.train_img = 400 # number of training images
+        self.output_layer = len(lines) # number of output layer neurons (match training images)
+        self.train_img = len(lines) # number of training images
         self.epoch = 4 # number of training iterations
         self.test_t = 200 # number of testing time points
         self.cuda = torch.device("cuda:0" if torch.cuda.is_available() else "cpu") # saliency calculating on cpu or gpu
@@ -79,6 +86,7 @@ class snn_model():
         
         # Test settings 
         self.test_true = False # leave default to False
+        self.validation = True # test this network against other methods, default True
         
         # Print network details
         print('////////////')
@@ -95,11 +103,6 @@ class snn_model():
         print('CUDA available: '+str(torch.cuda.is_available()))
         current_device = torch.cuda.current_device()
         print('Current device is: '+str(torch.cuda.get_device_name(current_device)))
-        
-        # Select training images from list
-        with open('./nordland_imageNames.txt') as file:
-            lines = [line.rstrip() for line in file]
-        self.img_load = lines
         
         # Network weights name
         self.training_out = './weights/'+str(self.input_layer)+'i'+\
@@ -207,7 +210,9 @@ class snn_model():
         
         # Guard function to prevent training network if user selects 'y' or net doesn't exist
         if retrain != 'n':        
-                       
+            '''
+            Training network functions
+            '''
             # Sets the input spikes into the BlitNet network
             def set_spikes():
                 spikeTimes = []
@@ -250,7 +255,10 @@ class snn_model():
                         net['eta_stdp'][ex_weight[-1]] = self.n_init*pt
                         net['eta_stdp'][inh_weight[-1]] = -1*self.n_init*pt
                     yield
-             
+            
+            '''
+            Setup & run the network trainer
+            '''
             # Load the network training images and set the input spikes     
             self.loadImages()
             
@@ -356,7 +364,9 @@ class snn_model():
      '''
 
     def networktester(self):
-        
+        '''
+        Network tester functions
+        '''
         # set the input spikes
         def set_spikes():
             spikeTimes = []
@@ -372,25 +382,51 @@ class snn_model():
             spikeTimes = torch.from_numpy(np.array(spikeTimes))
             # set input spikes
             blitnet.setSpikeTimes(net,0,spikeTimes)
-            
+        
+        # network testing function    
         def test_network():
             # Test the output
             self.correct_idx = []
             self.numcorrect = 0
+            self.mat_dict = {}
+            idx = []
+            for n in range(self.location_repeat):
+                self.mat_dict[str(n)] = []
+                idx.append(n)
             for t in range(self.test_t):
                 blitnet.runSim(net,1)
                 nidx = np.argmax(net['x'][-1]) 
-                if nidx < 200:
-                    if  train_ids[nidx] == test_ids[t] or train_ids[(nidx+int(self.train_img/self.location_repeat))] == test_ids[t]:
+                if nidx < int(self.train_img/self.location_repeat):
+                    if  self.train_ids[nidx] == self.test_ids[t] or self.train_ids[(nidx+int(self.train_img/self.location_repeat))] == self.test_ids[t]:
                         self.numcorrect = self.numcorrect+1
                         self.correct_idx.append(t)
                 else:
-                    if train_ids[nidx] == test_ids[t] or train_ids[(nidx-int(self.train_img/self.location_repeat))] == test_ids[t]:
+                    if self.train_ids[nidx] == self.test_ids[t] or self.train_ids[(nidx-int(self.train_img/self.location_repeat))] == self.test_ids[t]:
                         self.numcorrect = self.numcorrect+1
                         self.correct_idx.append(t)
+                tonump = net['x'][-1].detach().cpu().numpy()
+                split_mat = np.split(tonump,self.location_repeat)
+                for n in range(self.location_repeat):
+                    self.mat_dict[str(idx[n])]= np.concatenate((self.mat_dict[str(idx[n])],split_mat[n]),axis=0)
                
                 yield
-                
+        
+        # network validation using alternative place matching algorithms and P@R calculation
+        def network_validator():
+            # reload training images for the comparisons
+            self.test_true= False # reset the test true flag
+            self.dataPath = '/home/adam/data/VPRTempo_training/training_data/'
+            self.test_imgs = self.ims.copy()
+            with open('./nordland_imageNames.txt') as file:
+                lines = [line.rstrip() for line in file]
+            self.img_load = lines
+            self.loadImages()
+            # run sum of absolute differences caluclation
+            validate.SAD(self)
+            
+        '''
+        Setup & running network tester
+        '''
         # Unpickle the stored network
         print('Unpickling '+self.training_out)
         if path.isfile(self.training_out):
@@ -417,23 +453,41 @@ class snn_model():
         
         # load the training and testing IDs for correct matching
         with open('./output/train_ids.pkl', 'rb') as f:
-            train_ids = pickle.load(f)      
+            self.train_ids = pickle.load(f)      
         with open('./output/test_ids.pkl', 'rb') as f:
-            test_ids = pickle.load(f)  
-            
+            self.test_ids = pickle.load(f)  
+         
+        # run the test netowrk    
         print('Running testing dataset on trained network')
         with alive_bar(self.test_t) as testbar:
             for i in test_network():
                 testbar()
-                
-        spkforc = 100*self.numcorrect/self.test_t
-        print(spkforc,'% correct')
+        
+        # store and print out number of correctly identified places
+        self.VPRTempo_correct = 100*self.numcorrect/self.test_t
+        print(self.VPRTempo_correct,'% correct')
+        
+        # plot the similarity matrices for each location repetition
+        for n in self.mat_dict:
+            temp_mat = self.mat_dict[str(n)]
+            reshape_mat = np.reshape(temp_mat,(self.test_t,int(self.train_img/self.location_repeat)))
+            # plot the matrix
+            fig = plt.figure()
+            plt.matshow(reshape_mat,fig)
+            fig.suptitle(("Similarity VPRTempo: Location "+str(int(n)+1)),fontsize = 12)
+            plt.xlabel("Database",fontsize = 12)
+            plt.ylabel("Query",fontsize = 12)
+            plt.show()
         if net['set_spks'][0] == True:
             blitnet.plotSpikes(net,0)
         
         # clear the CUDA cache
         torch.cuda.empty_cache()
         gc.collect()
+        
+        # if validation is set to True, run comparison methods
+        if self.validation:
+            network_validator()
 
 '''
 Run the network
