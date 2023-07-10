@@ -317,6 +317,7 @@ def calc_spikes(net):
                                   (net['x'][i]>0.0)*eta
         if net['rec_spks'][i]:
             n_idx = np.nonzero(net['x'][i])[0]
+            print('Woof woof woof')
             net['spikes'][i].extend([net['step_num']+1-net['x'][i][n],n]
                                     for n in n_idx)
 
