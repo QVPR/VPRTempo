@@ -27,10 +27,6 @@ conda create -n vprtempo python pytorch torchvision torchaudio cpuonly opencv ma
 ```console
 conda create -n vprtempo -c conda-forge python opencv matplotlib alive-progress -c pytorch pytorch::pytorch torchvision torchaudio
 ```
-Once the environment has been created, activate it and download the repository.
-```console
-conda install pytorch::pytorch torchvision torchaudio opencv matplotlib alive-progress -c pytorch
-```
 ### Get the repository
 Activate the environment
 ```console
