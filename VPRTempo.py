@@ -389,6 +389,7 @@ class snn_model():
             self.correct_idx = []
             self.numcorrect = 0
             self.mat_dict = {}
+            self.net_x = np.array([])
             idx = []
             for n in range(self.location_repeat):
                 self.mat_dict[str(n)] = []
@@ -405,6 +406,7 @@ class snn_model():
                         self.numcorrect = self.numcorrect+1
                         self.correct_idx.append(t)
                 tonump = net['x'][-1].detach().cpu().numpy()
+                self.net_x = np.concatenate((self.net_x,tonump),axis=0)
                 split_mat = np.split(tonump,self.location_repeat)
                 for n in range(self.location_repeat):
                     self.mat_dict[str(idx[n])]= np.concatenate((self.mat_dict[str(idx[n])],split_mat[n]),axis=0)
@@ -473,11 +475,12 @@ class snn_model():
             reshape_mat = np.reshape(temp_mat,(self.test_t,int(self.train_img/self.location_repeat)))
             # plot the matrix
             fig = plt.figure()
-            plt.matshow(reshape_mat,fig)
+            plt.matshow(reshape_mat,fig, cmap=plt.cm.prism)
             fig.suptitle(("Similarity VPRTempo: Location "+str(int(n)+1)),fontsize = 12)
             plt.xlabel("Database",fontsize = 12)
             plt.ylabel("Query",fontsize = 12)
             plt.show()
+                
         if net['set_spks'][0] == True:
             blitnet.plotSpikes(net,0)
         
