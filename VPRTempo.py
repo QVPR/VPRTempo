@@ -27,6 +27,7 @@ import cv2
 import pickle
 import torch
 import gc
+import re
 import sys
 sys.path.append('./src')
 sys.path.append('./weights')
@@ -51,22 +52,17 @@ class snn_model():
         
         # Image and patch normalization settings
         self.dataPath = '/home/adam/data/VPRTempo_training/training_data/' # training datapath
-        self.testPath = '/home/adam/data/VPRTempo_training/summer_gamma/' 
+        self.testPath = '/home/adam/data/VPRTempo_training/testing_data/' 
         self.imWidth = 28 # image width for patch norm
         self.imHeight = 28 # image height for patch norm
         self.num_patches = 7 # number of patches
         self.intensity = 255 # divide pixel values to get spikes in range [0,1]
         
-        # Select training images from list
-        with open('./nordland_imageNames.txt') as file:
-            lines = [line.rstrip() for line in file]
-        self.img_load = lines
-        
         # Network and training settings
         self.input_layer = (self.imWidth*self.imHeight) # number of input layer neurons
         self.feature_layer = int(self.input_layer*7)# number of feature layer neurons
-        self.output_layer = len(lines) # number of output layer neurons (match training images)
-        self.train_img = len(lines) # number of training images
+        self.output_layer = 400 # number of output layer neurons (match training images)
+        self.train_img = self.output_layer # number of training images
         self.epoch = 4 # number of training iterations
         self.test_t = 200 # number of testing time points
         self.cuda = torch.device("cuda:0" if torch.cuda.is_available() else "cpu") # saliency calculating on cpu or gpu
@@ -74,6 +70,25 @@ class snn_model():
         self.annl_pow = 2 # learning rate anneal power
         self.location_repeat = 2 # Number of training locations that are the same
         
+        # Select training images from list
+        with open('./nordland_imageNames.txt') as file:
+            lines = [line.rstrip() for line in file]
+        
+        # image selection, accounting for number of location repeats
+        bound = np.linspace(0, len(lines)-1, dtype=int, num = int(self.train_img/self.location_repeat))
+        self.img_load = []
+        for b in bound:
+            self.img_load.append(lines[b])
+        
+        # save text file here for testing images so its the same as the training
+            
+        if self.location_repeat > 1:
+            for n in bound:
+                filename = lines[n]
+                res = re.split('(\d+)', filename)
+                res[1] = str(int(res[1]) + 12837)
+                self.img_load.append(res[0]+res[1]+res[2])
+                
         # Hyperparamters
         self.theta_max = 0.25 # maximum threshold value
         self.n_init = 0.05 # initial learning rate value
@@ -86,7 +101,7 @@ class snn_model():
         
         # Test settings 
         self.test_true = False # leave default to False
-        self.validation = True # test this network against other methods, default True
+        self.validation = False # test this network against other methods, default True
         
         # Print network details
         print('////////////')
@@ -413,6 +428,17 @@ class snn_model():
                
                 yield
         
+        # calculate and plot distance matrices & PR curves
+        def plotit(netx):
+            reshape_mat = np.reshape(temp_mat,(self.test_t,int(self.train_img/self.location_repeat)))
+            # plot the matrix
+            fig = plt.figure()
+            plt.matshow(reshape_mat,fig, cmap=plt.cm.prism)
+            fig.suptitle(("Similarity VPRTempo: Location "+str(int(n)+1)),fontsize = 12)
+            plt.xlabel("Database",fontsize = 12)
+            plt.ylabel("Query",fontsize = 12)
+            plt.show()
+        
         # network validation using alternative place matching algorithms and P@R calculation
         def network_validator():
             # reload training images for the comparisons
@@ -472,14 +498,7 @@ class snn_model():
         # plot the similarity matrices for each location repetition
         for n in self.mat_dict:
             temp_mat = self.mat_dict[str(n)]
-            reshape_mat = np.reshape(temp_mat,(self.test_t,int(self.train_img/self.location_repeat)))
-            # plot the matrix
-            fig = plt.figure()
-            plt.matshow(reshape_mat,fig, cmap=plt.cm.prism)
-            fig.suptitle(("Similarity VPRTempo: Location "+str(int(n)+1)),fontsize = 12)
-            plt.xlabel("Database",fontsize = 12)
-            plt.ylabel("Query",fontsize = 12)
-            plt.show()
+            plotit(temp_mat)
                 
         if net['set_spks'][0] == True:
             blitnet.plotSpikes(net,0)
