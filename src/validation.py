@@ -56,62 +56,11 @@ def SAD(self):
             test_mat = np.concatenate((test_mat,test),axis=0)
         
         # create the similarity matrix
-        sim_mat = np.copy(np.reshape(test_mat,(self.test_t,self.train_img)))
-        sort_mat = np.sort(sim_mat,axis=1)
+        self.sim_mat = np.copy(np.reshape(test_mat,(self.test_t,self.train_img)))
         
-        # perform P@0-100%R calculations going through all the threshold values
-        tp_corr = {}
-        fp_corr = {}
-        tn_corr = {}
-        fn_corr = {}
-        for xdx, x in enumerate(range(200)):
-            thresh_vals = sort_mat[:,x]
-            tp_corr[str(xdx)] = 0
-            fp_corr[str(xdx)] = 0
-            tn_corr[str(xdx)] = 0
-            fn_corr[str(xdx)] = 0
-            
-            ap_pos = []
-            for m, mdx in enumerate(thresh_vals):
-                temp_row = np.copy(sim_mat[m,:])
-                temp_row[temp_row>mdx] = -1
-                nonzero = np.where(temp_row>0)
-                
-                positives = np.argwhere(temp_row!=-1)
-                ap_pos.append(len(positives[0]))
-                negatives = np.argwhere(temp_row==-1)
-                
-                # calculate true positives and false positives
-                if m in positives or m+self.test_t in positives:
-                    tp_corr[str(xdx)] = tp_corr[str(xdx)] + 1
-                    fp_corr[str(xdx)] = tp_corr[str(xdx)] - 1
-                if m not in negatives or m+self.test_t not in negatives:
-                    tn_corr[str(xdx)] = tn_corr[str(xdx)] + len(negatives)
-            fp_corr[str(xdx)] = len(positives) - tp_corr[str(xdx)]
-            fn_corr[str(xdx)] = len(negatives)-tn_corr[str(xdx)]
-        
-        tp_corr[str(xdx)] = tp_corr[str(xdx)]/self.test_t
         # store the output
         self.SAD_correct = 100*(numcorrect/len(self.test_imgs)) 
-        tp = np.array([])
-        fp = np.array([])
-        for n in range(len(tp_corr)):
-            tp = np.append(tp,np.array(tp_corr[str(n)]))
-            fp = np.append(fp,np.array(fp_corr[str(n)]))
-        precision = (tp)/(tp+fp)
-        # plot out the PR curve
-        array_pr = np.array([])
-        for e in range(len(tp_corr)):
-            array_pr = np.append(array_pr,np.array(tp_corr[str(e)]))
-        x_axes = np.linspace(0,1,num=len(tp))
-        y_axes = np.linspace(0,1,num=6)
-        fig = plt.figure()
-        plt.plot(x_axes,np.flip(precision))
-        plt.ylim(0,1)
-        fig.suptitle("PR curve SAD",fontsize = 12)
-        plt.xlabel("Recall",fontsize = 12)
-        plt.ylabel("Precision",fontsize = 12)
-        plt.show()
+
             
     run_sad()
     print('Number of correct images with SAD: '+str(self.SAD_correct)+'%')
