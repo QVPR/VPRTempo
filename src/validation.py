@@ -26,46 +26,67 @@ Imports
 import matplotlib.pyplot as plt
 import numpy as np
 from alive_progress import alive_bar
+from operator import add
 
 # Sum of Absolute Differences (SAD) calculation for images
 def SAD(self):
     
-    print("Calculating Sum of Absolute Differences (SAD) for training and testing data")
     def run_sad():
-        numcorrect = 0
-        test_mat = np.array([])
+        
+        # create dictionary for SAD calculation for each location repeat
+        self.sad_correct = 0
+        self.sad_mat = {}
+        for n in self.locations:
+            self.sad_mat[n] = np.array([])
+        
+        # create range for splitting out SAD matrices
+        z = int(len(self.ims)/len(self.locations))
+        zRange = [0]
+        zAdd = [1]
+        for m in range(1,len(self.locations)):
+            zRange.append((z*m))
+            zAdd.append(1)
         # loop through each test image to find the SAD
         for nEnum, n in enumerate(self.test_imgs):
-            
-            # loop through each training image and calculate SAD
-            test = []
+            temp_vals = []
+            # calculate SAD for each test image and store in dictionary
             for mEnum, m in enumerate(self.ims):
-                test.append(1/(self.imWidth*self.imHeight)*np.sum(np.subtract(np.abs(m),np.abs(n))))
-            test = np.array(test)
-            
-            # calculate the precision-recall curves for each 
-            # find the minimum value
-            min_arg = np.argmin(test)
-            if min_arg > int(self.train_img/self.location_repeat):
-                if self.train_ids[min_arg-(int(self.train_img/self.location_repeat))] == self.test_ids[nEnum]:
-                    numcorrect = numcorrect+1
-            else:
-                if self.train_ids[min_arg] == self.test_ids[nEnum]:
-                    numcorrect = numcorrect+1
+                temp_vals.append(1/(self.imWidth*self.imHeight)*np.sum(np.subtract(np.abs(m),np.abs(n))))
 
-            test_mat = np.concatenate((test_mat,test),axis=0)
-        
-        # create the similarity matrix
-        self.sim_mat = np.copy(np.reshape(test_mat,(self.test_t,self.train_img)))
-        
-        # store the output
-        self.SAD_correct = 100*(numcorrect/len(self.test_imgs)) 
-
+            if np.argmin(temp_vals) in zRange:
+                self.sad_correct = self.sad_correct + 1
             
-    run_sad()
-    print('Number of correct images with SAD: '+str(self.SAD_correct)+'%')
+            zRange = list(map(add,zRange,zAdd))
+            idx = [0,len(self.test_imgs)]
+            for n, ndx in enumerate(self.locations):
+                self.sad_mat[ndx] = np.append(self.sad_mat[ndx],np.array(temp_vals[idx[0]:idx[1]]))
+                idx[0] = idx[0] + len(self.test_imgs)
+                idx[1] = idx[1] + len(self.test_imgs)
+        
+            yield
+        # determine if correct match
+        print('SAD: number correct '+str(100*(self.sad_correct/len(self.test_imgs)))+'%')
+        
+    # run sum of absolute differences caluclation
+    print('Calculating sum of absolute differences')
+    with alive_bar(len(self.test_imgs)) as sbar:
+       for i in run_sad():
+          sbar()    
+
+    # plot the similarity matrices
+    sim_mat = np.zeros(len(self.test_imgs)*len(self.test_imgs))
+    for n in self.sad_mat:
+        sim_mat = sim_mat + self.sad_mat[n]
+    sim_mat = sim_mat/len(self.locations)
+    sim_mat = np.resize(sim_mat,(len(self.test_imgs),len(self.test_imgs)))
+    plot_name = "Similarity Sum of Absolute Differences"
+    fig = plt.figure()
+    plt.matshow(sim_mat,fig, cmap=plt.cm.Greens)
+    plt.colorbar(label="Pixel intensity")
+    fig.suptitle(plot_name,fontsize = 12)
+    plt.xlabel("Query",fontsize = 12)
+    plt.ylabel("Database",fontsize = 12)
+    plt.show()
     
-# Precision @ 100% recall calculation
-def PR_calc():
+    # run PR calculation for sum of absolute differences
     
-    print("Calculating precision @ 100% recall")
