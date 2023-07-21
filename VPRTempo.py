@@ -27,7 +27,6 @@ import cv2
 import pickle
 import torch
 import gc
-import re
 import math
 import sys
 sys.path.append('./src')
@@ -52,9 +51,16 @@ class snn_model():
     def __init__(self):
         super().__init__()
         
-        # Image and patch normalization settings
+        '''
+        USER SETTINGS
+        '''
         self.trainingPath = '/home/adam/data/VPRTempo_training/training_data/' # training datapath
-        self.testPath = '/home/adam/data/VPRTempo_training/testing_data/' 
+        self.testPath = '/home/adam/data/VPRTempo_training/testing_data/' # testing datapath
+        self.number_training_images = 2000 # alter number of training images
+        self.location_repeat = 3 # Number of training locations that are the same
+        self.locations = ["spring/","fall/", "winter/"] # which datasets are used in the training
+        
+        # Image and patch normalization settings
         self.imWidth = 28 # image width for patch norm
         self.imHeight = 28 # image height for patch norm
         self.num_patches = 7 # number of patches
@@ -63,38 +69,36 @@ class snn_model():
         # Network and training settings
         self.input_layer = (self.imWidth*self.imHeight) # number of input layer neurons
         self.feature_layer = int(self.input_layer*7)# number of feature layer neurons
-        self.output_layer = 400 # number of output layer neurons (match training images)
+        self.output_layer = self.number_training_images # number of output layer neurons (match training images)
         self.train_img = self.output_layer # number of training images
         self.epoch = 4 # number of training iterations
-        self.test_t = 200 # number of testing time points
+        self.test_t = self.output_layer # number of testing time points
         self.cuda = torch.device("cuda:0" if torch.cuda.is_available() else "cpu") # saliency calculating on cpu or gpu
         self.T = self.train_img*self.epoch # number of training steps
         self.annl_pow = 2 # learning rate anneal power
-        self.location_repeat = 2 # Number of training locations that are the same
         
         # Select training images from list
         with open('./nordland_imageNames.txt') as file:
             lines = [line.rstrip() for line in file]
         
         # image selection, accounting for number of location repeats
-        bound = np.linspace(0, len(lines)-1, dtype=int, num = int(self.train_img/self.location_repeat))
+        start = 0
+        end = start+(self.test_t*8)
+        bound = range(start,end,8)
         self.img_load = []
         for b in bound:
             self.img_load.append(lines[b])
         
         with open('./output/images.pkl', 'wb') as f:
             pickle.dump(self.img_load, f)
-            
-        if self.location_repeat > 1:
-            for n in bound:
-                filename = lines[n]
-                res = re.split('(\d+)', filename)
-                res[1] = str(int(res[1]) + 12837)
-                self.img_load.append(res[0]+res[1]+res[2])
-                
+        
+        self.fullTrainPaths = []
+        for n in self.locations:
+            self.fullTrainPaths.append(self.trainingPath+n)
+        
         # Hyperparamters
         self.theta_max = 0.25 # maximum threshold value
-        self.n_init = 0.05 # initial learning rate value
+        self.n_init = 0.01 # initial learning rate value
         self.n_itp = 0.25 # initial intrinsic threshold plasticity rate[[0.9999]]
         self.f_rate = [0.0012,0.2]# firing rate range
         self.p_exc = 0.025 # probability of excitatory connection
@@ -104,7 +108,7 @@ class snn_model():
         
         # Test settings 
         self.test_true = False # leave default to False
-        self.validation = False # test this network against other methods, default True
+        self.validation = True # test this network against other methods, default True
         
         # Print network details
         print('////////////')
@@ -180,26 +184,35 @@ class snn_model():
     def loadImages(self):
             
          if self.test_true:
-            self.dataPath = self.testPath
-            range_pop = range(self.test_t,self.train_img)
-            for m in reversed(range_pop):
-                self.img_load.pop(m)
-         else:
-            self.dataPath = self.trainingPath
+            self.fullTrainPaths = self.testPath
         
          self.ims = []
          self.ids = []
          print('Loading images and patch normalising')
-
-         for m in self.img_load:
-             self.fullpath = self.dataPath+m
-             # read and convert image from BGR to RGB 
-             self.img = cv2.imread(self.fullpath)[:,:,::-1]
-             # convert image
-             self.img = cv2.cvtColor(self.img,cv2.COLOR_RGB2GRAY)
-             self.processImage()
-             self.ims.append(self.img)
-             self.ids.append(m)
+         
+         if isinstance(self.fullTrainPaths,list):
+            for paths in self.fullTrainPaths:
+                self.dataPath = paths
+                for m in self.img_load:
+                    self.fullpath = self.dataPath+m
+                    # read and convert image from BGR to RGB 
+                    self.img = cv2.imread(self.fullpath)[:,:,::-1]
+                    # convert image
+                    self.img = cv2.cvtColor(self.img,cv2.COLOR_RGB2GRAY)
+                    self.processImage()
+                    self.ims.append(self.img)
+                    self.ids.append(m)
+         else:
+            self.dataPath = self.fullTrainPaths
+            for m in self.img_load:
+                self.fullpath = self.dataPath+m
+                # read and convert image from BGR to RGB 
+                self.img = cv2.imread(self.fullpath)[:,:,::-1]
+                # convert image
+                self.img = cv2.cvtColor(self.img,cv2.COLOR_RGB2GRAY)
+                self.processImage()
+                self.ims.append(self.img)
+                self.ids.append(m)
                 
          data = {'x': np.array(self.ims), 'y': np.array(self.ids), 
                              'rows': self.imWidth, 'cols': self.imHeight}
@@ -343,6 +356,12 @@ class snn_model():
                 out_spks[n] = [(n)+1.5,n]
                 append_spks[n] = [(n)+1.5,n]
                 
+            if self.location_repeat != 0:
+                base_spks = np.copy(out_spks)
+                for n in range(1,self.location_repeat):
+                    base_spks[:,0] = base_spks[:,0] + self.test_t
+                    out_spks = np.append(out_spks,base_spks,axis=0)
+            
             for n in range(self.epoch):
                 out_spks[:,0] += self.output_layer
     
@@ -429,7 +448,7 @@ class snn_model():
                 index_add = self.test_t*n
                 for m in range(self.test_t):
                     match_dict[str(m)].append(m + index_add)
-            pause=1    
+  
             # run the network
             for t in range(self.test_t):
                 blitnet.runSim(net,1)
@@ -477,8 +496,11 @@ class snn_model():
         def network_validator():
             # reload training images for the comparisons
             self.test_true= False # reset the test true flag
-            self.dataPath = '/home/adam/data/VPRTempo_training/training_data/'
             self.test_imgs = self.ims.copy()
+            self.dataPath = '/home/adam/data/VPRTempo_training/training_data/'
+            self.fullTrainPaths = []
+            for n in self.locations:
+                self.fullTrainPaths.append(self.trainingPath+n)
             self.loadImages()
             # run sum of absolute differences caluclation
             validate.SAD(self)
@@ -496,7 +518,8 @@ class snn_model():
         
         # Reset number of epochs to 1 to run testing network once
         self.epoch = 1
-        
+        self.location_repeat = 1
+
         # get the ground truth matrix
         self.loadImages()
         # Set input layer spikes as the testing images
@@ -519,7 +542,8 @@ class snn_model():
             else:
                 append_mat = np.copy(self.mat_dict[str(n)])
         plot_name = "training images"
-        plotit(append_mat,plot_name)
+        #plotit(append_mat,plot_name)
+        plotit(self.net_x,plot_name)
         
         # pickle the ground truth matrix
         reshape_mat = np.reshape(append_mat,(self.test_t,int(self.train_img/self.location_repeat)))
@@ -548,13 +572,14 @@ class snn_model():
         
         # Reset network details
         net['set_spks'][0] = []
-        #net['rec_spks'] = [True,True,True]
+        net['rec_spks'] = [True,True,True]
         net['sspk_idx'] = [0,0,0]
         net['step_num'] = 0
         net['spikes'] = [[],[],[]]
         
         # Load the testing images
-        self.test_true = True # Set image path to the testing images
+        #self.test_true = True # Set image path to the testing images
+        self.test_true = True
         self.loadImages()
         
         # Set input layer spikes as the testing images
@@ -581,7 +606,8 @@ class snn_model():
             else:
                 append_mat = np.copy(self.mat_dict[str(n)])
         plot_name = "VPRTempo"
-        plotit(append_mat,plot_name)
+        #plotit(append_mat,plot_name)
+        plotit(self.net_x,plot_name)
         # pickle the ground truth matrix
         S_in = np.reshape(append_mat,(self.test_t,int(self.train_img/self.location_repeat)))
         with open('./output/S_in.pkl', 'wb') as f:
@@ -600,7 +626,7 @@ class snn_model():
         plt.show()
         
         # plot spikes if they were recorded
-        if net['set_spks'][0] == True:
+        if net['rec_spks'][0] == True:
             blitnet.plotSpikes(net,0)
         
         # clear the CUDA cache
@@ -610,7 +636,6 @@ class snn_model():
         # if validation is set to True, run comparison methods
         if self.validation:
             network_validator()
-            pause=1
 
 '''
 Run the network
