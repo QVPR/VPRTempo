@@ -1,6 +1,6 @@
 #MIT License
 
-#Copyright (c) 2023 Adam Hines
+#Copyright (c) 2023 Adam Hines, Peter Stratton, Michael Milford, Tobias Fischer
 
 #Permission is hereby granted, free of charge, to any person obtaining a copy
 #of this software and associated documentation files (the "Software"), to deal
@@ -187,8 +187,6 @@ def norm_rates(net):
 
     for i,rate in enumerate(net['fire_rate']):
         if rate.any() and net['eta_ip'][i] > 0.0:
-            tensor_gzero = net['x'][i] > 0
-            indicies = tensor_gzero.nonzero()
             net['thr'][i] = net['thr'][i] + net['eta_ip'][i]*(net['x'][i]-rate)
             #xxx net['thr'][i] = net['thr'][i] + net['eta_ip'][i]*(net['x'][i]-rate)
             net['thr'][i][net['thr'][i]<0.0] = 0.0 #xxx
@@ -219,7 +217,6 @@ def norm_inhib(net):
 #  net: SORN instance
 
 def calc_spikes(net):
-    pause=1
     # Start with the noise and constant input in the neurons of each layer
     for i,nois in enumerate(net['nois']):
         if nois > 0:
@@ -311,15 +308,17 @@ def calc_spikes(net):
                         
     # Finally, update mean firing rates and record all spikes if needed
     for i,eta in enumerate(net['eta_ip']):
-
+        
         if eta > 0.0:
             net['mean_rate'][i] = net['mean_rate'][i]*(1.0-eta) +\
                                   (net['x'][i]>0.0)*eta
         if net['rec_spks'][i]:
-            n_idx = np.nonzero(net['x'][i])[0]
-            print('Woof woof woof')
-            net['spikes'][i].extend([net['step_num']+1-net['x'][i][n],n]
-                                    for n in n_idx)
+            outspk = (net['x'][i]).detach().cpu().numpy()
+            if i == 2:
+                outspk[outspk<0.05] = 0
+            n_idx = np.nonzero(outspk)
+            net['spikes'][i].extend([net['step_num']+net['x'][i][n].detach().cpu().numpy(),n]
+                                        for n in n_idx)
 
 ##################################
 # Calculate STDP
@@ -489,15 +488,13 @@ def subplotSpikes(net,cutoff):
      
     n_tot = 0
     for i,sp in enumerate(net['spikes']):
-        sp = sp.detach().cpu().numpy()
-        if any(sp):
-            x=[]; y=[]
-            for s in sp:
-                if s[0] > cutoff:
-                    x.extend([s[0]])
-                    y.extend([s[1]+n_tot])
-            plt.plot(x,y,'.',ms=1)
-            n_tot += np.size(net['x'][i])
+        x=[]; y=[]
+        for n in sp:
+            x.extend(list(n[0]))
+            y.extend(list(n[1]+n_tot))
+
+        plt.plot(x,y,'.',ms=1)
+        n_tot += np.size(net['x'][i].detach().cpu().numpy())
     
 ##################################
 # Plot recorded spikes in new figure
