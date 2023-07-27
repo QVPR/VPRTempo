@@ -54,11 +54,11 @@ class snn_model():
         '''
         USER SETTINGS
         '''
-        self.trainingPath = '/home/adam/data/VPRTempo_training/training_data/' # training datapath
-        self.testPath = '/home/adam/data/VPRTempo_training/testing_data/' # testing datapath
-        self.number_training_images = 2000 # alter number of training images
-        self.location_repeat = 3 # Number of training locations that are the same
-        self.locations = ["spring/","fall/", "winter/"] # which datasets are used in the training
+        self.trainingPath = '/home/adam/data/hpc/' # training datapath
+        self.testPath = '/home/adam/data/testing_data/summer/' # testing datapath
+        self.number_training_images = 300 # alter number of training images
+        self.location_repeat = 2 # Number of training locations that are the same
+        self.locations = ["spring/","fall/"] # which datasets are used in the training
         
         # Image and patch normalization settings
         self.imWidth = 28 # image width for patch norm
@@ -68,13 +68,13 @@ class snn_model():
         
         # Network and training settings
         self.input_layer = (self.imWidth*self.imHeight) # number of input layer neurons
-        self.feature_layer = int(self.input_layer*7)# number of feature layer neurons
+        self.feature_layer = int(self.input_layer*7) # number of feature layer neurons
         self.output_layer = self.number_training_images # number of output layer neurons (match training images)
         self.train_img = self.output_layer # number of training images
         self.epoch = 4 # number of training iterations
         self.test_t = self.output_layer # number of testing time points
         self.cuda = torch.device("cuda:0" if torch.cuda.is_available() else "cpu") # saliency calculating on cpu or gpu
-        self.T = self.train_img*self.epoch # number of training steps
+        self.T = int(self.number_training_images*self.epoch) # number of training steps
         self.annl_pow = 2 # learning rate anneal power
         
         # Select training images from list
@@ -123,9 +123,12 @@ class snn_model():
         print('Inhibitory p: '+str(self.p_inh))
         print('Constant input '+str(self.c))
         print('CUDA available: '+str(torch.cuda.is_available()))
-        current_device = torch.cuda.current_device()
-        print('Current device is: '+str(torch.cuda.get_device_name(current_device)))
-        
+        if torch.cuda.is_available() == True:
+            current_device = torch.cuda.current_device()
+            print('Current device is: '+str(torch.cuda.get_device_name(current_device)))
+        else:
+            print('Current device is: CPU')
+ 
         # Network weights name
         self.training_out = './weights/'+str(self.input_layer)+'i'+\
                                             str(self.feature_layer)+\
@@ -482,7 +485,7 @@ class snn_model():
             reshape_mat = np.reshape(netx,(self.test_t,int(self.train_img/self.location_repeat)))
             # plot the matrix
             fig = plt.figure()
-            plt.matshow(reshape_mat,fig, cmap=plt.cm.Greens)
+            plt.matshow(reshape_mat,fig, cmap=plt.cm.gist_yarg)
             plt.colorbar(label="Spike amplitude")
             fig.suptitle("Similarity "+name,fontsize = 12)
             plt.xlabel("Query",fontsize = 12)
@@ -497,7 +500,7 @@ class snn_model():
             # reload training images for the comparisons
             self.test_true= False # reset the test true flag
             self.test_imgs = self.ims.copy()
-            self.dataPath = '/home/adam/data/VPRTempo_training/training_data/'
+            self.dataPath = '/home/adam/data/hpc/'
             self.fullTrainPaths = []
             for n in self.locations:
                 self.fullTrainPaths.append(self.trainingPath+n)
@@ -555,7 +558,7 @@ class snn_model():
             GT[n,n] = 1
         plot_name = "Similarity absolute ground truth"
         fig = plt.figure()
-        plt.matshow(GT,fig, cmap=plt.cm.Greens)
+        plt.matshow(GT,fig, cmap=plt.cm.gist_yarg)
         plt.colorbar(label="Spike amplitude")
         fig.suptitle(plot_name,fontsize = 12)
         plt.xlabel("Query",fontsize = 12)
@@ -616,7 +619,7 @@ class snn_model():
         # calculate the precision of the system
         self.precision = self.tp/(self.tp+self.fp)
         self.recall = self.tp/self.test_t
-        P, R = createPR(S_in, GT, GTsoft)
+        P, R = createPR(S_in, GT, GT)
         # plot PR curve
         fig = plt.figure()
         plt.plot(R,P)
