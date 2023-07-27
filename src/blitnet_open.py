@@ -1,114 +1,34 @@
-##################################
-#
-# BLiTnet implementation (Binned Linear-Time networks)
-# ...previously
-# BITnet implementation (BInary-neuron binned-Time networks)
-#
-# Changes for version 09:
-# - Re-introduced explicit depression for normal inhib
-# connections rather than relying on normalisation to implcitly cause
-# depression.
-# - Changed the inc_stdp amount for inhib STDP to be
-# normalised based on the firing rate of the post neuron not the pre,
-# since the pre neuron firing is the baseline presumption for all
-# inhib STDP (ie pre->post = inc inhib, pre->no_post_spike = dec
-# inhib), so to ensure that independent activity leads to exactly 0
-# inhib weight means normalising on the post rate.
-# - Removed erroneous normalisation of the depression side of the
-# lateral inhib - was causing too little depression and the lateral
-# inhib was building up too strong
-#
-# Changes for version 10:
-# - for fast inhib, don't inhib if time diff = 0 (calc_spikes)
-# - code for init weights as normal rather than uniform (addWeights)
-# - add x_fastinp field to keep fast inhib separate from inhib normalisation (calc_spikes)
-#
-# Changes for version 11:
-# - allowed set_spikes to set spike time with sub-timestep resolution (setSpikeTimes)
-#
-# Changes for version 12:
-# - fast inhib spikes are all propagated with value 1 (calc_spikes)
-#
-# Changes for version 13:
-# - improved weight decay, but currently disabled (calc_stdp)
-# - used tiled matrices rather than loops for STDP calcs (calc_stdp)
-# - removed the spike shift of +0.5, but may put it back (calc_spikes)
-#
-# Changes for version 14:
-# - changed spike forcing - no unforced spikes allowed and added specific new STDP rules
-#   (calc_spikes and calc_stdp)
-#
-# Changes for version 15:
-# - don't prune weights that hit zero, just set them very small (1e-6 or -1e6) (calc_stdp)
-# - new function to plot spikes in a subplot (subplotSpikes)
-#
-# Changes for version 16:
-# - reinstated the spike shift of +0.5 that was removed in version 13 (calc_spikes)
-#
-# Changes for version 17:
-# - re-removed the spike shift of +0.5 (calc_spikes); it helped signal propagation but
-#   hindered feature extraction; instead, make weights stronger
-# - added wght_norm for weights (the total weight value to normalize to)
-# 
-# Changes for version 18:
-# - changed max spike amplitude from 1.0 to 0.9 (to avoid confusion with next timestep)
-#
-# Changes for version 19:
-# - BIG change to propagate spikes up thru a hierarchy in 1 step (calc_spikes, calc_stdp)
-#
-# Changes for version 20:
-# - STDP was broken in version 19 - fixed
-#
-# Changes for version 21:
-# - BIG change to remove normalisation of exc weights to a fixed value, instead normalise
-#   so spike amplitude averages 0.5; gets rid of normalisation 'fudge factor' and creates
-#   homeostasis between ITP (intrinsic threshold plasticity) and spike amplitudes (weights)
-# - Also limit any synapse to max 1.0, and fixed a missing STDP component of spike forcing
-#
-# Changes for version 21, PART B:
-# - BIG change to STDP which still wasn't working the best, see Chap 14 of full report
-# - also increased learning rate for inhib normalisation which I set too low in prev version
-#
-# Changes for version 22:
-# - totally rewrote spike forcing, can now easily outperform linear decoding
-# - removed dec_stdp term from normal STDP (now just relies on the (0.5-post) term)
-# - removed wght_norm field and norm_weights() function (no longer used)
-# - removed all spike 'shift' code (also no longer needed)
-# - removed limit of +/-1 on all weights which was sometimes upsetting balance
-#
-# Changes for version 23:
-# - ensure weights stay negative during inhib weight normalisation (norm_inhib)
-# - re-instate weight limits but this time set max. weight to +/-10
-#
-# Changes for version 24:
-# - modulate STDP learning rate by firing rate (low firing rate = high learning rate needed)
-#
-# Changes for version 25:
-# - clear predefined spikes when they are all used up
-# - fixed 'x_prev' to work for recurrent connections (calc_spikes)
-#
-#
-# SOME IDEAS:
-# - build-in learning rate annealing (pass: start rate, num timesteps, annealing power)
-# - build-in analog inputs (pass: min and max value, num input neurons, bump radius)
-# - allow thresholds to go -ve to allow spikes to occur from removal of tonic inhibition
-# - calc_stdp still needs work for recurrent connections
-#
-#
-# FULL REPORTS (latest first):
-# https://docs.google.com/document/d/19uybCShRo5kUJXRgVOEnH5GoLQy-RgeP7cqhvw7XYwM
-# and
-# https://docs.google.com/document/d/17H_dOlwNNLmLUdHQfqvUQ8cC0IBmLunbq-CYumH8vMY
-# and
-# https://docs.google.com/document/d/1JcQHpmTQNsP9a2tcIwsjg_Fwj-2FSAmOAv30uWOg7mA
-#
-##################################
+#MIT License
 
+#Copyright (c) 2023 Adam Hines, Peter Stratton, Michael Milford, Tobias Fischer
+
+#Permission is hereby granted, free of charge, to any person obtaining a copy
+#of this software and associated documentation files (the "Software"), to deal
+#in the Software without restriction, including without limitation the rights
+#to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+#copies of the Software, and to permit persons to whom the Software is
+#furnished to do so, subject to the following conditions:
+
+#The above copyright notice and this permission notice shall be included in all
+#copies or substantial portions of the Software.
+
+#THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+#IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+#FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+#AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+#LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+#OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+#SOFTWARE.
+
+'''
+Imports
+'''
 import numpy as np
-import matplotlib.pyplot as plt
 import pdb
-#import warnings
-#warnings.filterwarnings("error")
+import torch
+
+import matplotlib.pyplot as plt
+
 
 ##################################
 # Return a new empty BITnet instance
@@ -175,34 +95,26 @@ def addLayer(net,dims,thr_range,fire_rate,ip_rate,const_inp,nois,rec_spks):
     if np.isscalar(const_inp): const_inp = [const_inp,const_inp]
 
     net['dim'].append(np.array(dims,int))
-    net['x'].append(np.zeros(int(np.prod(dims))))
-    net['x_prev'].append(np.zeros(int(np.prod(dims))))
-    net['x_calc'].append(np.zeros(int(np.prod(dims))))
-    net['x_input'].append(np.zeros(int(np.prod(dims))))
-    net['x_fastinp'].append(np.zeros(int(np.prod(dims))))
-    net['mean_rate'].append(np.zeros(int(np.prod(dims))))
+    net['x'].append(torch.from_numpy(np.zeros(int(np.prod(dims)))))
+    net['x_prev'].append(torch.from_numpy(np.zeros(int(np.prod(dims)))))
+    net['x_calc'].append(torch.from_numpy(np.zeros(int(np.prod(dims)))))
+    net['x_input'].append(torch.from_numpy(np.zeros(int(np.prod(dims)))))
+    net['x_fastinp'].append(torch.from_numpy(np.zeros(int(np.prod(dims)))))
+    net['mean_rate'].append(torch.from_numpy(np.zeros(int(np.prod(dims)))))
     net['eta_ip'].append(ip_rate)
-    if len(thr_range) == 2:
-        net['thr'].append(np.random.uniform(thr_range[0],thr_range[1],
-                                            int(np.prod(dims))))
-    else:
-        net['thr'].append(thr_range) # xxx can't do this?
-    if len(fire_rate) == 2:
-        net['fire_rate'].append(np.random.uniform(fire_rate[0],fire_rate[1],
-                                                  int(np.prod(dims))))
-        net['have_rate'].append(any(net['fire_rate'][-1]>0.0))
-    else:
-        net['fire_rate'].append(fire_rate)
-        net['have_rate'].append(fire_rate>0.0)
-    if len(const_inp) == 2:
-        net['const_inp'].append(np.random.uniform(const_inp[0],const_inp[1],
-                                                  int(np.prod(dims))))
-    else:
-        net['const_inp'].append(const_inp)
+    net['thr'].append(torch.from_numpy(np.random.uniform(thr_range[0],thr_range[1],
+                                            int(np.prod(dims)))))
+    net['fire_rate'].append(torch.from_numpy(np.random.uniform(fire_rate[0],fire_rate[1],
+                                              int(np.prod(dims)))))
+    net['have_rate'].append(any(net['fire_rate'][-1]>0.0))
+
+    net['const_inp'].append(torch.from_numpy(np.random.uniform(const_inp[0],const_inp[1],
+                                                  int(np.prod(dims)))))
+
     net['nois'].append(nois)
     net['set_spks'].append([])
     net['sspk_idx'].append(0)
-    net['spikes'].append([])
+    net['spikes'].append(torch.empty([],dtype=torch.float64))
     net['rec_spks'].append(rec_spks)
 
     return len(net['x'])-1
@@ -222,18 +134,16 @@ def addWeights(net,layer_pre,layer_post,W_range,p,stdp_rate,fast_inhib):
     # Check constraints etc
     if np.isscalar(W_range): W_range = [W_range,W_range]
 
-    nrow = np.size(net['x'][layer_pre])
-    ncol = np.size(net['x'][layer_post])
-    if False:
-        net['W'].append(np.random.uniform(W_range[0],W_range[1],[nrow,ncol]))
+    nrow =net['x'][layer_pre].size(dim=0)
+    ncol = net['x'][layer_post].size(dim=0)
+
+    Wmn = (W_range[0]+W_range[1])/2.0
+    Wsd = (W_range[1]-W_range[0])/6.0
+    net['W'].append(torch.from_numpy(np.random.normal(Wmn,Wsd,[nrow,ncol])))
+    if Wmn > 0.0:
+        net['W'][-1][net['W'][-1]<0.0] = 0.0
     else:
-        Wmn = (W_range[0]+W_range[1])/2.0
-        Wsd = (W_range[1]-W_range[0])/6.0
-        net['W'].append(np.random.normal(Wmn,Wsd,[nrow,ncol]))
-        if Wmn > 0.0:
-            net['W'][-1][net['W'][-1]<0.0] = 0.0
-        else:
-            net['W'][-1][net['W'][-1]>0.0] = 0.0
+        net['W'][-1][net['W'][-1]>0.0] = 0.0
     setzero = np.random.rand(nrow,ncol) > p
     if layer_pre==layer_post: # no self connections allowed
         setzero = np.logical_or(setzero,np.identity(nrow))
@@ -263,8 +173,10 @@ def addWeights(net,layer_pre,layer_post,W_range,p,stdp_rate,fast_inhib):
 # FOLLOWING training ensure that: forced spikes array is removed, ie: setSpikeTimes(n,l,[])
 
 def setSpikeTimes(net,layer,times):
-
-    net['set_spks'][layer] = times.copy()
+    if isinstance(times,list):
+        net['set_spks'][layer] = times.copy()
+    else:    
+        net['set_spks'][layer] = times.detach().clone()
     net['sspk_idx'][layer] = 0
     
 ##################################
@@ -275,7 +187,7 @@ def norm_rates(net):
 
     for i,rate in enumerate(net['fire_rate']):
         if rate.any() and net['eta_ip'][i] > 0.0:
-            net['thr'][i] = net['thr'][i] + net['eta_ip'][i]*((net['x'][i]>0.0)-rate)
+            net['thr'][i] = net['thr'][i] + net['eta_ip'][i]*(net['x'][i]-rate)
             #xxx net['thr'][i] = net['thr'][i] + net['eta_ip'][i]*(net['x'][i]-rate)
             net['thr'][i][net['thr'][i]<0.0] = 0.0 #xxx
             
@@ -305,24 +217,23 @@ def norm_inhib(net):
 #  net: SORN instance
 
 def calc_spikes(net):
-
     # Start with the noise and constant input in the neurons of each layer
     for i,nois in enumerate(net['nois']):
         if nois > 0:
             net['x_input'][i] = np.random.normal(0.0,nois,int(np.prod(net['dim'][i])))
         else:
-            net['x_input'][i].fill(0.0)
-        net['x_input'][i] += net['const_inp'][i].copy()
+            net['x_input'][i] = torch.full_like(net['x_input'][i],0.0)
+        net['x_input'][i] += net['const_inp'][i].detach().clone()
         # Find the threshold crossings (overwritten later if needed)
-        net['x'][i] = np.clip(net['x_input'][i]-net['thr'][i],a_min=0.0,a_max=0.9)
+        net['x'][i] = torch.clamp((net['x_input'][i]-net['thr'][i]),0.0,0.9)
     # Loop thru layers to insert any predefined spikes
     for i in range(len(net['set_spks'])):
         if len(net['set_spks'][i]):
-            net['x'][i].fill(0.0)
+            net['x'][i] = torch.full_like(net['x'][i],0.0)
             sidx = net['sspk_idx'][i]
             if sidx < len(net['set_spks'][i]): stim = net['set_spks'][i][sidx,0]
             while sidx < len(net['set_spks'][i]) and int(stim) <= net['step_num']:
-                net['x'][i][int(net['set_spks'][i][sidx,1])] = np.mod(stim,1)
+                net['x'][i][int(net['set_spks'][i][sidx,1])] = torch.fmod(stim,1)
                 sidx += 1
                 if sidx < len(net['set_spks'][i]):
                     stim = net['set_spks'][i][sidx,0]
@@ -346,9 +257,9 @@ def calc_spikes(net):
 
             # Synaptic currents last for 1 timestep
             if layers[0]!=layers[1]:
-                net['I'][i] = np.matmul(net['x'][layers[0]],W)
+                net['I'][i] = torch.matmul(net['x'][layers[0]],W)
             else:
-                net['I'][i] = np.matmul(net['x_prev'][layers[0]],W)
+                net['I'][i] = torch.matmul(net['x_prev'][layers[0]],W)
             
             net['x_input'][layers[1]] += net['I'][i]
 
@@ -397,14 +308,17 @@ def calc_spikes(net):
                         
     # Finally, update mean firing rates and record all spikes if needed
     for i,eta in enumerate(net['eta_ip']):
-
+        
         if eta > 0.0:
             net['mean_rate'][i] = net['mean_rate'][i]*(1.0-eta) +\
                                   (net['x'][i]>0.0)*eta
         if net['rec_spks'][i]:
-            n_idx = np.nonzero(net['x'][i])[0]
-            net['spikes'][i].extend([net['step_num']+1-net['x'][i][n],n]
-                                    for n in n_idx)
+            outspk = (net['x'][i]).detach().cpu().numpy()
+            if i == 2:
+                outspk[outspk<0.05] = 0
+            n_idx = np.nonzero(outspk)
+            net['spikes'][i].extend([net['step_num']+net['x'][i][n].detach().cpu().numpy(),n]
+                                        for n in n_idx)
 
 ##################################
 # Calculate STDP
@@ -418,7 +332,7 @@ def calc_stdp(net):
 
             # Remember layer numbers and weight matrix shape
             layers = net['W_lyr'][i]
-            shape = np.shape(W)
+            shape = W.size()
 
             #
             # Spike Forcing has special rules to make calculated and forced spikes match
@@ -444,8 +358,8 @@ def calc_stdp(net):
                     mpre = net['x'][layers[0]]/net['fire_rate'][layers[0]]
                 else:
                     mpre = net['x'][layers[0]]
-                pre  = np.tile(np.reshape(mpre, [shape[0],1]),[1,shape[1]])
-                post = np.tile(np.reshape(xdiff,[1,shape[1]]),[shape[0],1])
+                pre  = torch.from_numpy(np.tile(np.reshape(mpre, [shape[0],1]),[1,shape[1]]))
+                post = torch.from_numpy(np.tile(np.reshape(xdiff,[1,shape[1]]),[shape[0],1]))
 
                 # Excitatory connections
                 if net['eta_stdp'][i] > 0:
@@ -464,20 +378,13 @@ def calc_stdp(net):
             #
             elif not net['fast_inhib'][i]:
 
-                # Pre and Post spikes tiled across and down for all synapses
-                #if net['have_rate'][layers[0]]:
-                #    # Modulate learning rate by firing rate (low firing rate = high learning rate)
-                #    mpre = net['x'][layers[0]] #/net['fire_rate'][layers[0]]
-                #else:
-                #    mpre = net['x'][layers[0]]
-                #pre = np.tile(np.reshape(mpre,[shape[0],1]),[1,shape[1]])
-                pre = np.tile(np.reshape(net['x'][layers[0]],[shape[0],1]),[1,shape[1]])
+                pre = torch.from_numpy(np.tile(np.reshape(net['x'][layers[0]],[shape[0],1]),[1,shape[1]]))
                 if net['have_rate'][layers[1]]:
                     # Modulate learning rate by firing rate (low firing rate = high learning rate)
                     mpost = net['x'][layers[1]] #/net['fire_rate'][layers[1]]
                 else:
                     mpost = net['x'][layers[1]]
-                post = np.tile(np.reshape(mpost,[1,shape[1]]),[shape[0],1])
+                post = torch.from_numpy(np.tile(np.reshape(mpost,[1,shape[1]]),[shape[0],1]))
 
                 # Excitatory synapses
                 if net['eta_stdp'][i] > 0:
@@ -581,14 +488,13 @@ def subplotSpikes(net,cutoff):
      
     n_tot = 0
     for i,sp in enumerate(net['spikes']):
-        if any(sp):
-            x=[]; y=[]
-            for s in sp:
-                if s[0] > cutoff:
-                    x.extend([s[0]])
-                    y.extend([s[1]+n_tot])
-            plt.plot(x,y,'.',ms=1)
-            n_tot += np.size(net['x'][i])
+        x=[]; y=[]
+        for n in sp:
+            x.extend(list(n[0]))
+            y.extend(list(n[1]+n_tot))
+
+        plt.plot(x,y,'.',ms=1)
+        n_tot += np.size(net['x'][i].detach().cpu().numpy())
     
 ##################################
 # Plot recorded spikes in new figure
