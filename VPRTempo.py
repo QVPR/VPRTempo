@@ -25,6 +25,7 @@ Imports
 '''
 import cv2
 import pickle
+import os
 import torch
 import gc
 import math
@@ -56,7 +57,7 @@ class snn_model():
         '''
         self.trainingPath = '/home/adam/data/hpc/' # training datapath
         self.testPath = '/home/adam/data/testing_data/summer/' # testing datapath
-        self.number_training_images = 300 # alter number of training images
+        self.number_training_images = 25 # alter number of training images
         self.location_repeat = 2 # Number of training locations that are the same
         self.locations = ["spring/","fall/"] # which datasets are used in the training
         
@@ -76,21 +77,11 @@ class snn_model():
         self.cuda = torch.device("cuda:0" if torch.cuda.is_available() else "cpu") # saliency calculating on cpu or gpu
         self.T = int(self.number_training_images*self.epoch) # number of training steps
         self.annl_pow = 2 # learning rate anneal power
+        self.filter = 8 # filter images every 8 seconds (equivelant to 8 images)
         
         # Select training images from list
         with open('./nordland_imageNames.txt') as file:
-            lines = [line.rstrip() for line in file]
-        
-        # image selection, accounting for number of location repeats
-        start = 0
-        end = start+(self.test_t*8)
-        bound = range(start,end,8)
-        self.img_load = []
-        for b in bound:
-            self.img_load.append(lines[b])
-        
-        with open('./output/images.pkl', 'wb') as f:
-            pickle.dump(self.img_load, f)
+            self.imageNames = [line.rstrip() for line in file]
         
         self.fullTrainPaths = []
         for n in self.locations:
@@ -104,7 +95,6 @@ class snn_model():
         self.p_exc = 0.025 # probability of excitatory connection
         self.p_inh = 0.125 # probability of inhibitory connection
         self.c= 0.125 # constant input 
-        self.pickler = True # default True, pickles network details and can be reused without retraining
         
         # Test settings 
         self.test_true = False # leave default to False
@@ -133,7 +123,7 @@ class snn_model():
         self.training_out = './weights/'+str(self.input_layer)+'i'+\
                                             str(self.feature_layer)+\
                                         'f'+str(self.output_layer)+\
-                                            'o'+str(self.epoch)+'.pkl'
+                                            'o'+str(self.epoch)+'/'
   
     # Get the 2D patches or the patch normalization
     def get_patches2D(self):
@@ -191,7 +181,6 @@ class snn_model():
         
          self.ims = []
          self.ids = []
-         print('Loading images and patch normalising')
          
          if isinstance(self.fullTrainPaths,list):
             for paths in self.fullTrainPaths:
@@ -236,11 +225,21 @@ class snn_model():
     '''
     Run the training network
     '''
-    def run_train(self):
+    def run_train(self, ensemble, ensemble_num):
+        
+        # output the image name range for each ensemble loop
+        ensemble_range = range(0,len(self.imageNames),self.train_img*self.filter)
+        filter_names = self.imageNames[ensemble_range[ensemble_num]:ensemble_range[ensemble_num+1]]
+        
+        # set the image names to be loaded
+        imgName_range = range(0,self.train_img*self.filter,self.filter)
+        self.img_load = []
+        for n in imgName_range:
+            self.img_load.append(filter_names[n])
         
         # Check if pre-trained network exists, prompt if retrain or run
-        if path.isfile(self.training_out):
-            retrain = input("A network with these parameters exists, re-train weights? (y/n):\n")
+        if path.isdir(self.training_out) and len(os.listdir(self.training_out)) == n_ensembles or os.path.isfile(self.training_out + 'ensemble_net.pkl'):
+            retrain = input("A network with these parameters exists, re-train ensembles? (y/n):\n")
         else:
             retrain = 'y'
         
@@ -395,17 +394,46 @@ class snn_model():
             net['step_num'] = 0
             net['spikes'] = [[],[],[]]
             
+            # check if output dir exsist, create if not
+            if not path.isdir(self.training_out):
+                os.mkdir(self.training_out)
+                
             # Output the trained network
-            if self.pickler:
-                print('Pickling trained network')
-                with open(self.training_out, 'wb') as f:
-                    pickle.dump(net, f)
+            print('Pickling trained network')
+            outputPkl = self.training_out + str(ensemble_num) + '.pkl'
+            with open(outputPkl, 'wb') as f:
+                pickle.dump(net, f)
             
+            breakflag = False
+            # when ensemble training is done, pickle entire ensemble into a dictionary
+            if len(os.listdir(self.training_out)) == n_ensembles:
+                print('Creating ensemble dictionary')
+                ensemble_net = {}
+                for n in range(0,ensemble):
+                    pickleName = self.training_out + str(n) + '.pkl'
+                    # Select training images from list
+                    net = []
+                    with open(pickleName, 'rb') as f:
+                         net = pickle.load(f)
+                    ensemble_net[str(n)] = net
+                    
+                    # delete the individual pickled net
+                    os.remove(pickleName)
+                # pickle the ensemble network
+                outputPkl = self.training_out + 'ensemble_net.pkl'
+                with open(outputPkl, 'wb') as f:
+                    pickle.dump(ensemble_net, f)
+        
+        # stop the ensemble training from continuing
+        else:
+            breakflag = True # set to True to stop the training network
+        
+        return breakflag, self.img_load, self.training_out
     '''
      Run the testing network
      '''
 
-    def networktester(self):
+    def networktester(self, net, imgids):
         '''
         Network tester functions
         '''
@@ -419,7 +447,6 @@ class snn_model():
                 spiketime = (n+1)+tempspikes
                 spike_neuron = (np.column_stack((spiketime,nz_indicies[0]))).tolist()
                 spikeTimes.extend(spike_neuron)
-                yield
             
             spikeTimes = torch.from_numpy(np.array(spikeTimes))
             # set input spikes
@@ -477,8 +504,6 @@ class snn_model():
                 split_mat = np.split(tonump,self.location_repeat)
                 for n in range(self.location_repeat):
                     self.mat_dict[str(idx[n])]= np.concatenate((self.mat_dict[str(idx[n])],split_mat[n]),axis=0)
-               
-                yield
         
         # calculate and plot distance matrices
         def plotit(netx,name):
@@ -511,31 +536,18 @@ class snn_model():
         '''
         Setup & running network tester
         '''
-        # Unpickle the stored network
-        print('Unpickling '+self.training_out)
-        if path.isfile(self.training_out):
-            with open(self.training_out, 'rb') as f:
-                 net = pickle.load(f)
-        else:
-            raise Exception("Network does not exist in this configuration, please train the network first")
         
         # Reset number of epochs to 1 to run testing network once
         self.epoch = 1
         self.location_repeat = 1
-
+        self.img_load = imgids
         # get the ground truth matrix
         self.loadImages()
         # Set input layer spikes as the testing images
-        print('Setting spike times')
-        with alive_bar(len(self.spike_rates)) as sbar:
-            for i in set_spikes():
-                sbar()
+        set_spikes()
         
         # run the test netowrk    
-        print('Getting ground truth matrix')
-        with alive_bar(self.test_t) as testbar:
-            for i in test_network():
-                testbar()
+        test_network()
                 
         # plot the similarity matrices for each location repetition
         append_mat = []
@@ -546,7 +558,7 @@ class snn_model():
                 append_mat = np.copy(self.mat_dict[str(n)])
         plot_name = "training images"
         #plotit(append_mat,plot_name)
-        plotit(self.net_x,plot_name)
+        #plotit(self.net_x,plot_name)
         
         # pickle the ground truth matrix
         reshape_mat = np.reshape(append_mat,(self.test_t,int(self.train_img/self.location_repeat)))
@@ -557,18 +569,18 @@ class snn_model():
         for n in range(len(GT)):
             GT[n,n] = 1
         plot_name = "Similarity absolute ground truth"
-        fig = plt.figure()
-        plt.matshow(GT,fig, cmap=plt.cm.gist_yarg)
-        plt.colorbar(label="Spike amplitude")
-        fig.suptitle(plot_name,fontsize = 12)
-        plt.xlabel("Query",fontsize = 12)
-        plt.ylabel("Database",fontsize = 12)
-        plt.show()
-        with open('./output/GT.pkl', 'wb') as f:
-            pickle.dump(GT, f)
+        #fig = plt.figure()
+        #plt.matshow(GT,fig, cmap=plt.cm.gist_yarg)
+        #plt.colorbar(label="Spike amplitude")
+        #fig.suptitle(plot_name,fontsize = 12)
+        #plt.xlabel("Query",fontsize = 12)
+        #plt.ylabel("Database",fontsize = 12)
+        #plt.show()
+        #with open('./output/GT.pkl', 'wb') as f:
+         #   pickle.dump(GT, f)
         
         self.VPRTempo_correct = 100*self.numcorrect/self.test_t
-        print(self.VPRTempo_correct,'% correct')
+        #print(self.VPRTempo_correct,'% correct')
         
         # Clear the network output spikes
         blitnet.setSpikeTimes(net,2,[])
@@ -586,20 +598,13 @@ class snn_model():
         self.loadImages()
         
         # Set input layer spikes as the testing images
-        print('Setting spike times')
-        with alive_bar(len(self.spike_rates)) as sbar:
-            for i in set_spikes():
-                sbar()
+        set_spikes()
         
         # run the test netowrk    
-        print('Running testing dataset on trained network')
-        with alive_bar(self.test_t) as testbar:
-            for i in test_network():
-                testbar()
+        test_network()
         
         # store and print out number of correctly identified places
         self.VPRTempo_correct = 100*self.numcorrect/self.test_t
-        print(self.VPRTempo_correct,'% correct')
         
         # plot the similarity matrices for each location repetition
         append_mat = []
@@ -610,7 +615,7 @@ class snn_model():
                 append_mat = np.copy(self.mat_dict[str(n)])
         plot_name = "VPRTempo"
         #plotit(append_mat,plot_name)
-        plotit(self.net_x,plot_name)
+        #plotit(self.net_x,plot_name)
         # pickle the ground truth matrix
         S_in = np.reshape(append_mat,(self.test_t,int(self.train_img/self.location_repeat)))
         with open('./output/S_in.pkl', 'wb') as f:
@@ -619,18 +624,18 @@ class snn_model():
         # calculate the precision of the system
         self.precision = self.tp/(self.tp+self.fp)
         self.recall = self.tp/self.test_t
-        P, R = createPR(S_in, GT, GT)
+        #P, R = createPR(S_in, GT, GT)
         # plot PR curve
-        fig = plt.figure()
-        plt.plot(R,P)
-        fig.suptitle("VPRTempo Precision Recall curve",fontsize = 12)
-        plt.xlabel("Recall",fontsize = 12)
-        plt.ylabel("Precision",fontsize = 12)
-        plt.show()
+        #fig = plt.figure()
+        #plt.plot(R,P)
+        #fig.suptitle("VPRTempo Precision Recall curve",fontsize = 12)
+        #plt.xlabel("Recall",fontsize = 12)
+        #plt.ylabel("Precision",fontsize = 12)
+        #plt.show()
         
         # plot spikes if they were recorded
-        if net['rec_spks'][0] == True:
-            blitnet.plotSpikes(net,0)
+        #if net['rec_spks'][0] == True:
+         #   blitnet.plotSpikes(net,0)
         
         # clear the CUDA cache
         torch.cuda.empty_cache()
@@ -639,11 +644,79 @@ class snn_model():
         # if validation is set to True, run comparison methods
         if self.validation:
             network_validator()
+        
+        return self.numcorrect, append_mat
 
 '''
 Run the network
 '''        
 if __name__ == "__main__":
     model = snn_model() # Instantiate model
-    model.run_train() # Run the training network
-    model.networktester() # Run the testing network
+    
+    '''
+    Run the training network
+    '''
+    n_ensembles = 132 # number of individual ensembles
+    
+    # loop through training each ensemble at a time
+    trained_imgs = {}
+    ensemble_range = range(0,n_ensembles)
+    for n in ensemble_range:
+        imgids = []
+        flg, imgids, outfold = model.run_train(n_ensembles,n) # Run the training network
+        if flg:
+            break 
+        trained_imgs[str(n)] = imgids
+    
+        # output the trained image ids
+        if n == ensemble_range[-1]:
+            with open(outfold + 'img_ids.pkl', 'wb') as f:
+                pickle.dump(trained_imgs, f)
+    
+    '''
+    Run the testing network
+    '''
+    
+    # unpickle the network
+    print('Unpickling the ensemble network')
+    with open(outfold+'ensemble_net.pkl', 'rb') as f:
+         ensemble_net = pickle.load(f)
+    
+    # unpickle the image names
+    print('Unpickling the image training names')
+    if not bool(trained_imgs):
+        with open(outfold+'img_ids.pkl', 'rb') as f:
+             trained_imgs = pickle.load(f)
+    
+    # run supervised testing
+    def supervisedTest():
+        global totCorrect, network_mat
+        totCorrect = 0
+        network_mat = np.zeros(3300*3300)
+        for t in ensemble_range:
+            filter_names = trained_imgs[str(t)]
+            correct = []
+            correct, mat = model.networktester(ensemble_net[str(t)],filter_names)
+            totCorrect = totCorrect + correct
+            tempmat = np.zeros(625*132)
+            start = (len(mat)*t)
+            end = (len(mat)*(t+1))
+            tempmat[start:end] = mat
+            network_mat[82500*t:82500*(t+1)] = tempmat
+            yield
+    
+    print('Testing ensemble network')
+    with alive_bar(n_ensembles) as sbar:
+        for i in supervisedTest():
+            sbar()
+    
+    reshape_mat = np.reshape(network_mat,(3300,3300))
+    plot_name = "Similarity VPRTempo"
+    fig = plt.figure()
+    plt.matshow(reshape_mat,fig, cmap=plt.cm.gist_yarg)
+    plt.colorbar(label="Pixel intensity")
+    fig.suptitle(plot_name,fontsize = 12)
+    plt.xlabel("Query",fontsize = 12)
+    plt.ylabel("Database",fontsize = 12)
+    plt.show()
+    print('P@100R '+str(100*(totCorrect/3300)))
