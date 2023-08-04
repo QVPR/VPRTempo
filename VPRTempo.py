@@ -1,6 +1,6 @@
 #MIT License
 
-#Copyright (c) 2023 Adam Hines, Michael Milford, Tobias Fischer
+#Copyright (c) 2023 Adam Hines, Peter G Stratton, Michael Milford, Tobias Fischer
 
 #Permission is hereby granted, free of charge, to any person obtaining a copy
 #of this software and associated documentation files (the "Software"), to deal
@@ -29,6 +29,7 @@ import os
 import torch
 import gc
 import math
+import timeit
 import sys
 sys.path.append('./src')
 sys.path.append('./weights')
@@ -37,6 +38,7 @@ sys.path.append('./output')
 
 import numpy as np
 import blitnet_open as blitnet
+import blitnet_ensemble as ensemble
 import validation as validate
 import matplotlib.pyplot as plt
 
@@ -58,10 +60,11 @@ class snn_model():
         '''
         self.trainingPath = '/home/adam/data/hpc/' # training datapath
         self.testPath = '/home/adam/data/testing_data/' # testing datapath
-        self.number_training_images = 33 # alter number of training images
-        self.number_ensembles = 100 # number of ensemble networks
-        self.location_repeat = 3 # Number of training locations that are the same
-        self.locations = ["spring","fall","winter"] # which datasets are used in the training
+        self.number_training_images = 100 # alter number of training images
+        self.number_ensembles = 30 # number of ensemble networks
+        self.ensemble_max = self.number_training_images*10 # maximum number of images per ensemble_net
+        self.location_repeat = 2 # Number of training locations that are the same
+        self.locations = ["spring","fall"] # which datasets are used in the training
         self.test_location = "summer"
         
         # Image and patch normalization settings
@@ -72,7 +75,7 @@ class snn_model():
         
         # Network and training settings
         self.input_layer = (self.imWidth*self.imHeight) # number of input layer neurons
-        self.feature_layer = int(self.input_layer*7) # number of feature layer neurons
+        self.feature_layer = int(self.input_layer*2) # number of feature layer neurons
         self.output_layer = self.number_training_images # number of output layer neurons (match training images)
         self.train_img = self.output_layer # number of training images
         self.epoch = 4 # number of training iterations
@@ -90,6 +93,7 @@ class snn_model():
         self.filteredNames = []
         for n in range(0,len(self.imageNames),self.filter):
             self.filteredNames.append(self.imageNames[n])
+        del self.filteredNames[self.number_training_images*self.number_ensembles:len(self.filteredNames)]
         
         # Get the full training and testing data paths    
         self.fullTrainPaths = []
@@ -190,7 +194,7 @@ class snn_model():
         self.ids = {'training':[],'testing':[]}
         
         if self.test_true:
-            self.fullTrainPaths = self.testPath+self.test_location+'/'
+            self.fullTrainPaths = [self.testPath+self.test_location+'/']
         
         for paths in self.fullTrainPaths:
             self.dataPath = paths
@@ -198,7 +202,7 @@ class snn_model():
                 dictEntry = 'testing'
             else:
                 dictEntry = 'training'
-            for m in self.filteredNames:
+            for m in self.loadNames:
                 self.fullpath = self.dataPath+m
                 # read and convert image from BGR to RGB 
                 self.img = cv2.imread(self.fullpath)[:,:,::-1]
@@ -207,8 +211,6 @@ class snn_model():
                 self.processImage()
                 self.imgs[dictEntry].append(self.img)
                 self.ids[dictEntry].append(m)
-        
-                yield   
                  
     
     def setSpikeRates(self, images, ids):     
@@ -230,7 +232,7 @@ class snn_model():
              
     def checkTrainTest(self):
         # Check if pre-trained network exists, prompt if retrain or run
-        if path.isdir(self.training_out) and len(os.listdir(self.training_out)) == self.number_ensembles or os.path.isfile(self.training_out + 'ensemble_net.pkl'):
+        if path.isdir(self.training_out) and len(os.listdir(self.training_out)) == self.number_ensembles or os.path.isfile(self.training_out + 'ensemble_net1.pkl'):
             retrain = input("A network with these parameters exists, re-train ensembles? (y/n):\n")
         else:
             retrain = 'y'
@@ -245,20 +247,23 @@ class snn_model():
         check = self.checkTrainTest()
         
         if check == 'y':
-            # Load the network training images and set the input spikes     
-            print('Loading dataset images')
-            with alive_bar(len(self.filteredNames)*(self.location_repeat)) as sbar:
-                for i in self.loadImages():
-                    sbar()
-            self.setSpikeRates(self.imgs['training'],self.ids['training'])
-                        
+              
+            if os.path.isfile(self.training_out + 'ensemble_net.pkl'):
+                os.remove(self.training_out+'ensemble_net.pkl')
+            
             def train_start():  
+                
+                self.copy_max = self.ensemble_max
+                self.ensemble_netNum = 1
+                breakUp = int(self.ensemble_max/self.number_training_images)
                 
                 for ensemble_num, ndx in enumerate(range(self.number_ensembles)):
                     start_range = self.number_training_images * ndx
                     end_range = self.number_training_images * (ndx+1)
-                    images = self.imgs['training'][start_range:end_range]
-                    spike_rates = self.spike_rates[start_range:end_range]
+                    
+                    self.loadNames = self.filteredNames[start_range:end_range]
+                    self.loadImages()
+                    self.setSpikeRates(self.imgs['training'],self.ids['training'])
                     # create new network
                     net = blitnet.newNet()
                     iLayer = blitnet.addLayer(net,[self.input_layer,1],0.0,0.0,0.0,0.0,0.0,
@@ -285,7 +290,7 @@ class snn_model():
                     
                     # Set the spikes times for the input images
                     spikeTimes = []
-                    for n, ndx in enumerate(spike_rates):
+                    for n, ndx in enumerate(self.spike_rates):
                         nz_indicies = np.nonzero(ndx)
                         tempspikes = ndx[nz_indicies[0]]
                         tempspikes[tempspikes>=1] = 0.999
@@ -329,8 +334,8 @@ class snn_model():
                     append_spks = np.zeros([(self.output_layer),2])
             
                     for n in range(self.output_layer):
-                        out_spks[n] = [(n)+1.5,n]
-                        append_spks[n] = [(n)+1.5,n]
+                        out_spks[n] = [(n)+1.9,n]
+                        append_spks[n] = [(n)+1.9,n]
                         
                     if self.location_repeat != 0:
                         base_spks = np.copy(out_spks)
@@ -383,22 +388,39 @@ class snn_model():
                     
                     breakflag = False
                     # when ensemble training is done, pickle entire ensemble into a dictionary
-                    if len(os.listdir(self.training_out)) == self.number_ensembles:
-                        ensemble_net = {}
-                        for n in range(0,self.number_ensembles):
+                    if self.ensemble_max == (ensemble_num+1)*self.number_training_images or ensemble_num == range(self.number_ensembles)[-1]:
+                        for n in range((self.ensemble_netNum-1)*breakUp,(self.ensemble_netNum*breakUp)):
                             pickleName = self.training_out + str(n) + '.pkl'
                             # Select training images from list
                             net = []
-                            with open(pickleName, 'rb') as f:
-                                 net = pickle.load(f)
-                            ensemble_net[str(n)] = net
-                            
-                            # delete the individual pickled net
-                            os.remove(pickleName)
+                            if os.path.isfile(pickleName):
+                                with open(pickleName, 'rb') as f:
+                                     net = pickle.load(f)
+                                if n == range((self.ensemble_netNum-1)*breakUp,(self.ensemble_netNum*breakUp))[0]:
+                                    ensemble_net = net
+                                    for m in range(oLayer+2):
+                                        ensemble_net['W'][m] = torch.unsqueeze(ensemble_net['W'][m],-1)
+                                        if m <= (len(ensemble_net['thr'])-1):
+                                            ensemble_net['thr'][m] = torch.unsqueeze(ensemble_net['thr'][m],-1)
+                                            ensemble_net['const_inp'][m] = torch.unsqueeze(ensemble_net['const_inp'][m],-1)
+                                            ensemble_net['fire_rate'][m] = torch.unsqueeze(ensemble_net['fire_rate'][m],-1)
+                                else:
+                                    for m in range(oLayer+2):
+                                        ensemble_net['W'][m] = torch.concat((ensemble_net['W'][m],torch.unsqueeze(net['W'][m],-1)),-1)
+                                        if m <= (len(ensemble_net['thr'])-1):
+                                            ensemble_net['thr'][m] = torch.concat((ensemble_net['thr'][m],torch.unsqueeze(net['thr'][m],-1)),-1)
+                                            ensemble_net['const_inp'][m] = torch.concat((ensemble_net['const_inp'][m],torch.unsqueeze(net['const_inp'][m],-1)),-1)
+                                            ensemble_net['fire_rate'][m] = torch.concat((ensemble_net['fire_rate'][m],torch.unsqueeze(net['fire_rate'][m],-1)),-1)
+                                
+                                # delete the individual pickled net
+                                os.remove(pickleName)
                         # pickle the ensemble network
-                        outputPkl = self.training_out + 'ensemble_net.pkl'
+                        outputPkl = self.training_out + 'ensemble_net'+str(self.ensemble_netNum)+'.pkl'
                         with open(outputPkl, 'wb') as f:
                             pickle.dump(ensemble_net, f)
+                            
+                        self.ensemble_max += self.copy_max
+                        self.ensemble_netNum += 1
                     
                     yield
                     
@@ -411,83 +433,33 @@ class snn_model():
      Run the testing network
      '''
 
-    def networktester(self, net, imgids):
+    def networktester(self):
         '''
         Network tester functions
         '''
         # set the input spikes
         def set_spikes():
             spikeTimes = []
+
             for n, ndx in enumerate(self.spike_rates):
-                nz_indicies = np.nonzero(ndx)
-                tempspikes = ndx[nz_indicies[0]]
-                tempspikes[tempspikes>=1] = 0.999
-                spiketime = (n+1)+tempspikes
-                spike_neuron = (np.column_stack((spiketime,nz_indicies[0]))).tolist()
-                spikeTimes.extend(spike_neuron)
+               nz_indicies = np.nonzero(ndx)
+               tempspikes = ndx[nz_indicies[0]]
+               tempspikes[tempspikes>=1] = 0.999
+               spiketime = (n+1)+tempspikes
+               spike_neuron = (np.column_stack((spiketime,nz_indicies[0]))).tolist()
+               spikeTimes.extend(spike_neuron)
             
             spikeTimes = torch.from_numpy(np.array(spikeTimes))
-            # set input spikes
-            blitnet.setSpikeTimes(net,0,spikeTimes)
-        
-        # network testing function    
-        def test_network():
-            # set up variables to load output into
-            self.correct_idx = []
-            self.numcorrect = 0
-            self.mat_dict = {}
-            self.net_x = np.array([])
-            self.tp = 0
-            self.tn = 0
-            self.fp = 0
-            self.fn = 0
-            idx = []
             
-            # reset the output similarity matrices
-            for n in range(self.location_repeat):
-                self.mat_dict[str(n)] = []
-                idx.append(n)
+            for m in netDict:
+                print('Setting spikes')
+                # set input spikes
+                blitnet.setSpikeTimes(netDict[str(m)],0,spikeTimes)
                 
-            # create a dictionary of locations, with location repeats
-            match_dict = {}
-            for n in range(self.test_t):
-                match_dict[str(n)] = []
-            for n in range(self.location_repeat):
-                index_add = self.test_t*n
-                for m in range(self.test_t):
-                    match_dict[str(m)].append(m + index_add)
-  
-            # run a test using one image for all the nets
-            start = timer()
-            for o in ensemble_net:
-                blitnet.runSim(ensemble_net[str(o)],1)
-            end = timer()
-            diff = (end-start)
-            # run the network
-            for t in range(self.test_t):
-                blitnet.runSim(net,1)
-                # output the index of highest amplitude spike
-                tonump = net['x'][-1].detach().cpu().numpy()
-                nidx = np.argmax(tonump) 
-                
-                # if output value is 0, classify as false negative
-                if np.max(tonump) == 0:
-                    self.fn = self.fn + 1
-                
-                # evaluate if the output is TP or a FP
-                else:
-                    index_lst = match_dict[str(t)]
-                    if nidx in index_lst:
-                        self.numcorrect = self.numcorrect+1
-                        self.tp = self.tp+1
-                        self.correct_idx.append(t)
-                    else:
-                        self.fp = self.fp+1
-
-                self.net_x = np.concatenate((self.net_x,tonump),axis=0)
-                split_mat = np.split(tonump,self.location_repeat)
-                for n in range(self.location_repeat):
-                    self.mat_dict[str(idx[n])]= np.concatenate((self.mat_dict[str(idx[n])],split_mat[n]),axis=0)
+                netDict[str(m)]['set_spks'][0] = torch.unsqueeze(netDict[str(m)]['set_spks'][0],-1)
+                tempspikes = torch.clone(netDict[str(m)]['set_spks'][0])
+                for n in range(int(self.ensemble_max/self.number_training_images)-1):
+                    netDict[str(m)]['set_spks'][0] = torch.concat((netDict[str(m)]['set_spks'][0],tempspikes),-1)
         
         # calculate and plot distance matrices
         def plotit(netx,name):
@@ -521,24 +493,74 @@ class snn_model():
         Setup & running network tester
         '''
         
-        # Reset number of epochs to 1 to run testing network once
-        self.epoch = 1
-        self.location_repeat = 1
-        self.test_true = True
-
-        # get the ground truth matrix
+        # Alter network running parameters for testing
+        self.epoch = 1 # Only run the network once
+        self.location_repeat = 1 # One location repeat for testing
+        self.test_true = True # Flag for multiple data functions
+        
+        # unpickle the network
+        print('Unpickling the ensemble network')
+        self.ensemble_netNum = len([entry for entry in os.listdir(self.training_out) if os.path.isfile(os.path.join(self.training_out, entry))])
+        netDict = {}
+        for n in range(self.ensemble_netNum):
+            with open(self.training_out+'ensemble_net'+str(n+1)+'.pkl', 'rb') as f:
+                 netDict[str(n)] = pickle.load(f)
+             
         # Load the network training images and set the input spikes     
         print('Loading dataset images')
-        with alive_bar(len(self.filteredNames)) as sbar:
-            for i in self.loadImages():
-                sbar()
-        self.setSpikeRates(self.imgs['training'],self.ids['training'])
-        # Set input layer spikes as the testing images
+        self.loadNames = self.filteredNames
+        self.loadImages()
+
+        self.setSpikeRates(self.imgs['testing'],self.ids['testing'])
         set_spikes()
+
+        #_net['rec_spks'] = [True,True,True]'=
+        numcorrect = 0
         
-        # run the test netowrk    
-        test_network()
-                
+        try:
+            self.ensemble_max = self.copy_max
+        except AttributeError:
+            self.ensemble_max = self.ensemble_max
+            
+        for n in netDict:
+            netDict[str(n)]['n_ensemble'] = int(self.ensemble_max/self.number_training_images)
+            
+        # Combine all the networks and set each input image sequentially  
+        start = timeit.default_timer()
+        avPeakMatch = np.array([])
+        avPeakFail = np.array([])
+        avAccurate = np.zeros(self.number_ensembles)
+        ensembleNum = self.number_training_images-1
+        ensembleInd = 0
+        for t in range(self.test_t*self.number_ensembles):
+            tonump = np.array([])
+            for g in netDict:
+                _net = netDict[str(g)]
+                ensemble.runSim(_net,1)
+                # output the index of highest amplitude spike
+                tonump = np.append(tonump,np.reshape(_net['x'][-1].detach().cpu().numpy(),(self.test_t*int(self.ensemble_max/self.number_training_images),1),order='F'))
+            
+            nidx = np.argmax(tonump)
+            if nidx == t:
+                numcorrect += 1
+                print('\033[32m'+"!Match! for image - "+self.ids['testing'][t]+': '+str(t)+' - '+str(nidx))
+                avPeakMatch = np.append(avPeakMatch,np.max(tonump))
+                avAccurate[ensembleInd] += 1
+            else:
+                print('\033[31m'+":( fail for image - "+self.ids['testing'][t]+': '+str(t)+' - '+str(nidx))
+                avPeakFail = np.append(avPeakFail,np.max(tonump))
+            
+            if t == ensembleNum:
+                ensembleNum += self.number_training_images
+                ensembleInd += 1
+            #if nidx == t:
+             #   numcorrect += 1
+        print('\033[0m'+"It took this long ",timeit.default_timer() - start)
+        print("Number of correct places "+str((numcorrect/(self.test_t*self.number_ensembles))*100)+"%")
+        avPeakMatch[avPeakMatch == 0] = np.nan
+        avPeakFail[avPeakFail == 0] = np.nan
+        print('Average spike amplitude of matches: '+str(np.nanmean(avPeakMatch)))
+        print('Average spike amplitude of fails: '+str(np.nanmean(avPeakFail)))   
         # plot the similarity matrices for each location repetition
         append_mat = []
         for n in self.mat_dict:
@@ -644,7 +666,7 @@ Run the network
 if __name__ == "__main__":
     model = snn_model() # Instantiate model
     model.train()
-    
+    model.networktester()
     # unpickle the network
     print('Unpickling the ensemble network')
     with open(outfold+'ensemble_net.pkl', 'rb') as f:
