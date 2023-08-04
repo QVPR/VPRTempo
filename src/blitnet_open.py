@@ -284,7 +284,6 @@ def calc_spikes(net):
                     net['x_calc'][j] = np.clip(net['x_input'][j]-net['thr'][j],a_min=0.0,a_max=0.9)
                 if layers[0]==layers[1]:
                     net['x_prev'][j] = net['x'][j][:]
-
                 # If the next weight matrix is fast inhib for this layer, process it now
                 if i < len(net['W'])-1:
                     if net['fast_inhib'][i+1] and layers[1]==net['W_lyr'][i+1][1]:
@@ -304,7 +303,7 @@ def calc_spikes(net):
                         else:
                             # Predefined spikes exist for this layer, remember the calculated ones
                             net['x_calc'][flyrs[1]] = np.clip(net['x_fastinp'][flyrs[1]]-net['thr'][flyrs[1]],
-                                                     a_min=0.0,a_max=0.9)            
+                                                     a_min=0.0,a_max=0.9)                 
                         
     # Finally, update mean firing rates and record all spikes if needed
     for i,eta in enumerate(net['eta_ip']):
