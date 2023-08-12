@@ -39,7 +39,7 @@ sys.path.append('./output')
 import numpy as np
 import BlitnetDense as blitnet
 import blitnet_ensemble as ensemble
-import BlitnetSparse as sparse
+import blitnet_open as sparse
 import validation as validate
 import matplotlib.pyplot as plt
 
@@ -59,10 +59,10 @@ class snn_model():
         '''
         USER SETTINGS
         '''
-        self.trainingPath = '/home/adam/data/hpc/' # training datapath
-        self.testPath = '/home/adam/data/testing_data/' # testing datapath
-        self.number_training_images = 3000# alter number of training images
-        self.number_modules = 50 # number of module networks
+        self.trainingPath = '/Users/adam/data/train/' # training datapath
+        self.testPath = '/Users/adam/data/train/' # testing datapath
+        self.number_training_images = 1000# alter number of training images
+        self.number_modules = 5 # number of module networks
         self.location_repeat = 2 # Number of training locations that are the same
         self.locations = ["fall","spring"] # which datasets are used in the training
         self.test_location = "summer"
@@ -85,7 +85,7 @@ class snn_model():
             torch.cuda.set_device(self.device)
             torch.cuda.init()
             torch.cuda.synchronize(device=self.device)
-        self.T = int(self.number_training_images*self.epoch) # number of training steps
+        self.T = int(self.number_training_images/self.number_modules) # number of training steps
         self.annl_pow = 2 # learning rate anneal power
         self.filter = 8 # filter images every 8 seconds (equivelant to 8 images)
         
@@ -255,7 +255,7 @@ class snn_model():
                  self.spike_rates = torch.unsqueeze(self.init_rates,0)
              else:
                  self.spike_rates = torch.concat((self.spike_rates,torch.unsqueeze(self.init_rates,0)),0)
-                 
+
              
     def checkTrainTest(self):
         # Check if pre-trained network exists, prompt if retrain or run
@@ -294,6 +294,7 @@ class snn_model():
                 fLayer = blitnet.addLayer(net,[self.number_modules,self.feature_layer,1],[0,self.theta_max],
                                           [self.f_rate[0],self.f_rate[1]],self.n_itp,
                                           [0,self.c],0,False)
+                
                 # sequentially set the feature firing rates
                 fstep = (self.f_rate[1]-self.f_rate[0])/self.feature_layer
                 for x in range(self.number_modules):
@@ -308,18 +309,22 @@ class snn_model():
                 
                 # Set the spikes times for the input images
                 net['set_spks'][0] = self.spike_rates
-                
+                start = timeit.default_timer()
                 # Train the input to feature layer
                 # Train the feature layer
-                for t in range(int(self.T/10)):
-                    blitnet.runSim(net,10,self.device)
-                    # anneal learning rates
-                    if np.mod(t,10)==0:
-                        pt = pow(float(self.T-t)/self.T,self.annl_pow)
-                        net['eta_ip'][fLayer] = self.n_itp*pt
-                        net['eta_stdp'][weight[0]] = self.n_init*pt
-                        net['eta_stdp'][weight[1]] = -1*self.n_init*pt
-                            
+                for epoch in range(self.epoch):
+                    net['step_num'] = 0
+                    print('epoch '+str(epoch))
+                    for t in range(int(self.T)):
+                        blitnet.runSim(net,1,self.device)
+                        # anneal learning rates
+                        if np.mod(t,10)==0:
+                            pt = pow(float(self.T-t)/self.T,self.annl_pow)
+                            net['eta_ip'][fLayer] = self.n_itp*pt
+                            net['eta_stdp'][weight[0]] = self.n_init*pt
+                            net['eta_stdp'][weight[1]] = -1*self.n_init*pt
+                
+                print(str(timeit.default_timer()-start))
                 # Turn off learning between input and feature layer
                 net['eta_ip'][fLayer] = 0.0
                 if self.p_exc > 0.0: net['eta_stdp'][weight[0]] = 0.0
@@ -359,15 +364,16 @@ class snn_model():
                 append_spks[:,0] += self.T
                 blitnet.setSpikeTimes(net,oLayer,append_spks)
                 
-                # Train the feature to output layer            
-                for t in range(self.T):
-                    blitnet.runSim(net,1)
-                    # Anneal learning rates
-                    if np.mod(t,10)==0:
-                        pt = pow(float(self.T-t)/(self.T),self.annl_pow)
-                        net['eta_ip'][oLayer] = self.n_itp*pt
-                        net['eta_stdp'][ex_weight[-1]] = self.n_init*pt
-                        net['eta_stdp'][inh_weight[-1]] = -1*self.n_init*pt
+                # Train the feature to output layer   
+                for epoch in range(self.epoch): # number of training epochs
+                    for t in range(self.T):
+                        blitnet.runSim(net,1)
+                        # Anneal learning rates
+                        if np.mod(t,10)==0:
+                            pt = pow(float(self.T-t)/(self.T),self.annl_pow)
+                            net['eta_ip'][oLayer] = self.n_itp*pt
+                            net['eta_stdp'][ex_weight[-1]] = self.n_init*pt
+                            net['eta_stdp'][inh_weight[-1]] = -1*self.n_init*pt
 
                 # Turn off learning
                 net['eta_ip'][oLayer] = 0.0
