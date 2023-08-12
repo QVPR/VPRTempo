@@ -105,7 +105,6 @@ def addLayer(net,dims,thr_range,fire_rate,ip_rate,const_inp,nois,rec_spks):
     net['x_calc'].append(torch.zeros(dims[0],dims[1],dims[2],device=device))
     net['x_input'].append(torch.zeros(dims[0],dims[1],dims[2],device=device))
     net['x_fastinp'].append(torch.zeros(dims[0],dims[1],dims[2],device=device))
-    net['mean_rate'].append(torch.zeros(dims[0],dims[1],dims[2],device=device))
     net['eta_ip'].append(ip_rate)
     temp_thr = torch.zeros(dims[0],dims[1],dims[2], device=device)
     net['thr'].append(temp_thr.uniform_(thr_range[0],thr_range[1]))
@@ -181,6 +180,7 @@ def addWeights(net,layer_pre,layer_post,W_range,p,stdp_rate,fast_inhib):
             # append single reference arguments
             net['W_lyr'].append([layer_pre,layer_post])
             net['eta_stdp'].append(stdp_rate)
+            net['eta_stdp'].append(-stdp_rate)
             net['is_inhib'].append(W_range[0]<0.0 and W_range[1]<=0.0)
             net['fast_inhib'].append(fast_inhib and net['is_inhib'][-1])
         else:
@@ -201,21 +201,6 @@ def addWeights(net,layer_pre,layer_post,W_range,p,stdp_rate,fast_inhib):
             net['W'][inhIndex][n] = net['W'][inhIndex][n,:,:]/nrmInh
 
     return len(net['W'])-1
-
-##################################
-# Set defined spike times for a neuron layer (ie a neuron population)
-#  net:   BITnet instance
-#  layer: layer number
-#  times: 2-column matrix (col 1 = step num (ordered); col 2 = neuron num to spike)
-# NOTE for spike forcing an output layer ensure that: eta_ip=0 and target fire_rate=0
-# FOLLOWING training ensure that: forced spikes array is removed, ie: setSpikeTimes(n,l,[])
-
-def setSpikeTimes(net,layer,times):
-    if isinstance(times,list):
-        net['set_spks'][layer] = times.copy()
-    else:    
-        net['set_spks'][layer] = times.detach().clone()
-    net['sspk_idx'][layer] = 0
     
 ##################################
 # Normalise all the firing rates
@@ -226,8 +211,7 @@ def norm_rates(net):
     for i,rate in enumerate(net['fire_rate']):
         if rate.any() and net['eta_ip'][i] > 0.0:
             net['thr'][i] = net['thr'][i] + net['eta_ip'][i]*(net['x'][i]-rate)
-            #xxx net['thr'][i] = net['thr'][i] + net['eta_ip'][i]*(net['x'][i]-rate)
-            net['thr'][i][net['thr'][i]<0.0] = 0.0 #xxx
+            net['thr'][i][net['thr'][i]<0.0] = 0.0
             
 ##################################
 # Normalise inhib weights to balance input currents
@@ -235,15 +219,12 @@ def norm_rates(net):
 
 def norm_inhib(net):
 
-    #return #xxx no norm_inhib
     for i,W in enumerate(net['W']):
-        if net['eta_stdp'][i] < 0: # and not net['fast_inhib'][i]:
-        #if net['is_inhib'][i]: # and not net['fast_inhib'][i]:
-            lyr = net['W_lyr'][i][1]
-            #wadj = np.multiply(W,np.sign(net['x_input'][lyr]))*-net['eta_stdp'][i]*10
-            #wadj = np.multiply(W,net['x_input'][lyr]-net['fire_rate'][lyr])*-net['eta_stdp'][i]*100
+        if net['eta_stdp'][i] < 0:
+            lyr = net['W_lyr'][i-1]
+            shape = list(W.size())
             try:
-                wadj = np.multiply(W,net['x_input'][lyr])*-net['eta_stdp'][i]*50 #0.5 #100
+                wadj = (net['x_input'][lyr[1]]*W)*-net['eta_stdp'][i]*50
                 net['W'][i] += wadj
                 net['W'][i][W>0.0] = -0.000001
             except RuntimeWarning:
@@ -255,6 +236,7 @@ def norm_inhib(net):
 #  net: SORN instance
 
 def calc_spikes(net,device):
+    
     # Start with the constant input in the neurons of each layer
     for i,const in enumerate(net['const_inp']):
         net['x_input'][i] = torch.full_like(net['x_input'][i],0.0)
@@ -266,63 +248,39 @@ def calc_spikes(net,device):
     start = net['spike_dims'] * (net['step_num'] - 1)
     end = net['spike_dims'] * net['step_num']
     for i in range(len(net['set_spks'])):
-        if len(net['set_spks'][i]):
+        if len(net['set_spks'][i]): # detect if any set_spks tensors
             index = torch.arange(start,end,device=device,dtype=int)
             net['x'][i] = torch.index_select(net['set_spks'][i],1,index)
     
     # get layer index information
-    excW = len(net['W'])-1
-    inhW = len(net['W'])
+    excW = len(net['W'])-2
+    inhW = len(net['W'])-1
     layers = net['W_lyr'][len(net['W_lyr'])-1]
 
     # Synaptic currents last for 1 timestep
     # excitatory weights
-    net['I'][layers[0]] = torch.bmm(net['W'][excW-1],net['x'][layers[0]])
+    net['I'][layers[0]] = torch.bmm(net['W'][excW],net['x'][layers[0]])
     net['x_input'][layers[1]] += net['I'][layers[0]]
     #inhibitory weights
-    net['I'][layers[0]] = torch.bmm(net['W'][inhW-1],net['x'][layers[0]])
+    net['I'][layers[0]] = torch.bmm(net['W'][inhW],net['x'][layers[0]])
     net['x_input'][layers[1]] += net['I'][layers[0]]
-
-    # Find threshold crossings
-    if layers[0]!=layers[1]:
-        net['x_prev'][j] = net['x'][j][:]
-    if not len(net['set_spks'][j]):
-        # No predefined spikes for this layer
-        net['x'][j] = np.clip(net['x_input'][j]-net['thr'][j],a_min=0.0,a_max=0.9)
-    else:
-        # Predefined spikes exist for this layer, remember the calculated ones
-        net['x_calc'][j] = np.clip(net['x_input'][j]-net['thr'][j],a_min=0.0,a_max=0.9)
-    if layers[0]==layers[1]:
-        net['x_prev'][j] = net['x'][j][:]
-    # If the next weight matrix is fast inhib for this layer, process it now
-    if i < len(net['W'])-1:
-        if net['fast_inhib'][i+1] and layers[1]==net['W_lyr'][i+1][1]:
-            flyrs = net['W_lyr'][i+1]
-            net['x_fastinp'][flyrs[1]] = net['x_input'][flyrs[1]].copy()
-            if flyrs[0]==flyrs[1]:
-                postsyn_spks = np.tile(net['x'][flyrs[0]],[len(net['x'][flyrs[0]]),1])
-                presyn_spks = np.transpose(postsyn_spks)
-                presyn_spks[presyn_spks < postsyn_spks] = 0.0
-                net['x_fastinp'][flyrs[1]] += np.sum((presyn_spks)*net['W'][i+1],0)
-            else:
-                net['x_fastinp'][flyrs[1]] += np.matmul(net['x'][flyrs[0]],net['W'][i+1])
-            if not len(net['set_spks'][j]):
-                # No predefined spikes for this layer
-                net['x'][flyrs[1]] = np.clip(net['x_fastinp'][flyrs[1]]-net['thr'][flyrs[1]],
-                                         a_min=0.0,a_max=0.9)
-            else:
-                # Predefined spikes exist for this layer, remember the calculated ones
-                net['x_calc'][flyrs[1]] = np.clip(net['x_fastinp'][flyrs[1]]-net['thr'][flyrs[1]],
-                                         a_min=0.0,a_max=0.9)                 
+    
+    # adjust the spikes based on threshold
+    if not len(net['set_spks'][layers[1]]): # No predefined spikes for this layer
+        net['x'][layers[1]] = torch.clamp((net['x_input'][layers[1]]-net['thr'][layers[1]]),
+                                          min=0.0,max=0.9)
+    else: # Predefined spikes exist for this layer, remember the calculated ones
+        net['x_calc'][layers[1]] = torch.clamp((net['x_input'][layers[1]]-net['thr'][layers[1]]),
+                                        min=0.0,max=0.9)
+    
+    # update the x previous variable with calculated spikes
+    net['x_prev'][layers[1]] = net['x'][layers[1]]              
                 
     # Finally, update mean firing rates and record all spikes if needed
     for i,eta in enumerate(net['eta_ip']):
         
-        if eta > 0.0:
-            net['mean_rate'][i] = net['mean_rate'][i]*(1.0-eta) +\
-                                  (net['x'][i]>0.0)*eta
         if net['rec_spks'][i]:
-            outspk = (net['x'][i]).detach().cpu().numpy()
+            outspk = (net['x'][i]).detach().cpu().numpy() # detach to numpy for easy plotting
             if i == 2:
                 outspk[outspk<0.05] = 0
             n_idx = np.nonzero(outspk)
@@ -334,137 +292,80 @@ def calc_spikes(net,device):
 #  net: BITnet instance
 
 def calc_stdp(net):
+    
+    # get weight layer information
+    excW = len(net['W']) - 2
+    inhW = len(net['W']) - 1
+    layers = net['W_lyr'][len(net['W_lyr'])-1]
+    shape = list(net['W'][0].size())
+    
+    #
+    # Spike Forcing has special rules to make calculated and forced spikes match
+    #
+    if len(net['set_spks'][layers[1]]): # will run for the output layer
 
-    # Loop thru weight matrices that have non-zero learning rate
-    for i,W in enumerate(net['W']):
-        if net['eta_stdp'][i] != 0:
-
-            # Remember layer numbers and weight matrix shape
-            layers = net['W_lyr'][i]
-            shape = W.size()
-
-            #
-            # Spike Forcing has special rules to make calculated and forced spikes match
-            #
-            if len(net['set_spks'][layers[1]]):
-
-                # Diff between forced and calculated spikes
-                xdiff = net['x'][layers[1]] - net['x_calc'][layers[1]]
-                # Modulate learning rate by firing rate (low firing rate = high learning rate)
-                #if net['have_rate'][layers[1]]:
-                #    xdiff /= net['fire_rate'][layers[1]]
-                    
-                # Threshold rules - lower it if calced spike is smaller (and vice versa)
-                net['thr'][layers[1]] -= np.sign(xdiff)*np.abs(net['eta_stdp'][i])/10
-                net['thr'][layers[1]][net['thr'][layers[1]]<0.0] = 0.0  # don't go -ve
-                
-                # A little bit of threshold decay
-                #net['thr'][layers[1]] *= (1-net['eta_stdp'][i]/100)
-
-                # Pre and Post spikes tiled across and down for all synapses
-                if net['have_rate'][layers[0]]:
-                    # Modulate learning rate by firing rate (low firing rate = high learning rate)
-                    mpre = net['x'][layers[0]]/net['fire_rate'][layers[0]]
-                else:
-                    mpre = net['x'][layers[0]]
-                pre  = torch.from_numpy(np.tile(np.reshape(mpre, [shape[0],1]),[1,shape[1]]))
-                post = torch.from_numpy(np.tile(np.reshape(xdiff,[1,shape[1]]),[shape[0],1]))
-
-                # Excitatory connections
-                if net['eta_stdp'][i] > 0:
-                    havconn = W>0
-                    inc_stdp = pre*post*havconn
-                # Inhibitory connections
-                else:
-                    havconn = W<0
-                    inc_stdp = -pre*post*havconn
-
-                # Apply the weight changes
-                net['W'][i] += inc_stdp*net['eta_stdp'][i]
-
-            #
-            # Normal STDP
-            #
-            elif not net['fast_inhib'][i]:
-
-                pre = torch.from_numpy(np.tile(np.reshape(net['x'][layers[0]],[shape[0],1]),[1,shape[1]]))
-                if net['have_rate'][layers[1]]:
-                    # Modulate learning rate by firing rate (low firing rate = high learning rate)
-                    mpost = net['x'][layers[1]] #/net['fire_rate'][layers[1]]
-                else:
-                    mpost = net['x'][layers[1]]
-                post = torch.from_numpy(np.tile(np.reshape(mpost,[1,shape[1]]),[shape[0],1]))
-
-                # Excitatory synapses
-                if net['eta_stdp'][i] > 0:
-                    havconn = W>0
-                    inc_stdp = (0.5-post)*(pre>0)*(post>0)*havconn
-                # Inhibitory synapses
-                elif not net['fast_inhib'][i]: # and False:
-                    havconn = W<0
-                    inc_stdp = (0.5-post)*(pre>0)*(post>0)*havconn
-
-                # Apply the weight changes
-                net['W'][i] += inc_stdp*net['eta_stdp'][i]
-
-            #
-            # Fast inhibitory synapses, xxx update for firing rate modulation of eta_stdp?
-            #
-            else:
-
-                # Store weight changes
-                inc_stdp = np.zeros(shape)
-                dec_stdp = np.zeros(shape)
-
-                # Loop thru firing pre neurons
-                for pre in np.where(net['x'][layers[0]])[0]:
-                    # Loop thru ALL post neurons
-                    for post in range(len(net['x'][layers[1]])):
-                        if net['W'][i][pre,post]!=0:
-                            if net['x'][layers[1]][post] > 0.0:
-                                if net['x'][layers[0]][pre] >\
-                                   net['x'][layers[1]][post]:
-                                    # Synapse gets stronger if pre fires before post
-                                    inc_stdp[pre,post] = 0.5 #0.1 #/\
-                                                   #net['mean_rate'][layers[1]][post]
-                                                   #net['mean_rate'][layers[0]][pre]
-                                else:
-                                    # Synapse gets weaker if pre fires after post
-                                    dec_stdp[pre,post] = 0.5 *\
-                                            (1.0-net['mean_rate'][layers[1]][post])
-                            else:
-                                # Also gets weaker if pre fires and not post
-                                dec_stdp[pre,post] = 0.5*\
-                                                    net['mean_rate'][layers[1]][post]
-
-                # Apply the weight changes
-                net['W'][i] += inc_stdp*net['eta_stdp'][i]
-                net['W'][i] -= dec_stdp*net['eta_stdp'][i]
-
-            #
-            # Finish
-            #
+        # Diff between forced and calculated spikes
+        xdiff = net['x'][layers[1]] - net['x_calc'][layers[1]]
+        # Modulate learning rate by firing rate (low firing rate = high learning rate)
+        #if net['have_rate'][layers[1]]:
+        #    xdiff /= net['fire_rate'][layers[1]]
             
-            # Try weight decay?
-            #net['W'][i] = net['W'][i]-net['eta_stdp'][i]/10 # * (1-net['eta_stdp'][i])
-            if net['eta_stdp'][i] > 0.0:
-                # Excitation - pruning and synaptogenesis (structural plasticity)
-                net['W'][i][W<0.0] = 0.000001 #xxx
-                net['W'][i][W>10.0] = 10.0    #xxx
-                if np.random.rand() < 0.0: #0.1: #xxx TEMPORARILY OFF
-                    synap = (np.random.rand(2)*shape).astype(int)
-                    if net['W'][i][synap[0]][synap[1]] == 0:
-                        net['W'][i][synap[0]][synap[1]] = 0.001
-            else:
-                # Inhibition - must not go +ve
-                net['W'][i][W>0.0] = -0.000001 #xxx
-                net['W'][i][W<-10.0] = -10.0   #xxx
+        # Threshold rules - lower it if calced spike is smaller (and vice versa)
+        net['thr'][layers[1]] -= np.sign(xdiff)*np.abs(net['eta_stdp'][i])/10
+        net['thr'][layers[1]][net['thr'][layers[1]]<0.0] = 0.0  # don't go -ve
+        
+        # A little bit of threshold decay
+        #net['thr'][layers[1]] *= (1-net['eta_stdp'][i]/100)
 
-    # Finally clear out any predefined spikes that are used up (so calculated network spikes can take over)
-    for i in range(len(net['set_spks'])):
-        if len(net['set_spks'][i]):
-            if len(net['set_spks'][i]) <= net['sspk_idx'][i]:
-                net['set_spks'][i] = []
+        # Pre and Post spikes tiled across and down for all synapses
+        if net['have_rate'][layers[0]]:
+            # Modulate learning rate by firing rate (low firing rate = high learning rate)
+            mpre = net['x'][layers[0]]/net['fire_rate'][layers[0]]
+        else:
+            mpre = net['x'][layers[0]]
+        pre  = torch.from_numpy(np.tile(np.reshape(mpre, [shape[0],1]),[1,shape[1]]))
+        post = torch.from_numpy(np.tile(np.reshape(xdiff,[1,shape[1]]),[shape[0],1]))
+
+        # Excitatory connections
+        if net['eta_stdp'][i] > 0:
+            havconn = W>0
+            inc_stdp = pre*post*havconn
+        # Inhibitory connections
+        else:
+            havconn = W<0
+            inc_stdp = -pre*post*havconn
+
+        # Apply the weight changes
+        net['W'][i] += inc_stdp*net['eta_stdp'][i]
+    
+    #
+    # Normal STDP
+    #
+    else:
+        
+        # tile out pre- and post-spikes
+        pre = torch.tile(net['x'][layers[0]],(1,shape[1]))
+        pre = torch.reshape(pre,(shape[0],shape[1],shape[2]))
+        post = torch.tile(net['x'][layers[1]],(1,shape[2]))
+
+        # Excitatory synapses
+        havconnExc = net['W'][excW]>0
+        inc_stdpExc = (0.5-post)*(pre>0)*(post>0)*havconnExc
+        # Inhibitory synapses
+        havconnInh = net['W'][inhW]<0
+        inc_stdpInh = (0.5-post)*(pre>0)*(post>0)*havconnInh
+
+        # Apply the weight changes
+        net['W'][excW] += inc_stdpExc*net['eta_stdp'][excW]
+        net['W'][inhW] += inc_stdpInh*net['eta_stdp'][inhW]
+        
+    # fix connection weights if too +ve or -ve
+    # Excitation - pruning and synaptogenesis (structural plasticity)
+    net['W'][excW][net['W'][excW]<0.0] = 0.000001
+    net['W'][excW][net['W'][excW]>10.0] = 10.0
+    # Inhibition - must not go +ve
+    net['W'][inhW][net['W'][inhW]>0.0] = -0.000001
+    net['W'][inhW][net['W'][inhW]<-10.0] = -10.0
 
 ##################################
 # Run the simulation
