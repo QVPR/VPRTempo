@@ -26,7 +26,6 @@ Imports
 import numpy as np
 import pdb
 import torch
-import timeit
 
 import matplotlib.pyplot as plt
 
@@ -61,7 +60,6 @@ def newNet(modules, dims):
     #  W          = weights (-ve for inhib synapses)
     #  I          = synaptic currents
     #  is_inhib   = inhib weights flag
-    #  fast_inhib = fast inhib weights flag
     #  W_lyr      = pre and post layer numbers
     #  eta_stdp   = STDP learning rate (-ve for inhib synapses)
     #
@@ -72,7 +70,7 @@ def newNet(modules, dims):
     net = dict(x=[],x_input=[],x_prev=[],x_calc=[],x_fastinp=[],dim=[],thr=[],
                fire_rate=[],have_rate=[],mean_rate=[],eta_ip=[],const_inp=[],nois=[],
                set_spks=[],sspk_idx=[],spikes=[],rec_spks=[],
-               W=[],I=[],is_inhib=[],fast_inhib=[],W_lyr=[],eta_stdp=[],
+               W=[],I=[],is_inhib=[],W_lyr=[],eta_stdp=[],
                step_num=0, num_modules = modules, spike_dims = dims)
     
     return net
@@ -131,9 +129,8 @@ def addLayer(net,dims,thr_range,fire_rate,ip_rate,const_inp,nois,rec_spks):
 #  W_range:    weight range [lo,hi]
 #  p:          initial connection probability
 #  stdp_rate:  STDP rate (0=no STDP)
-#  fast_inhib: is this fast inhibition (ie inhib applied at same timestep)
 
-def addWeights(net,layer_pre,layer_post,W_range,p,stdp_rate,fast_inhib):
+def addWeights(net,layer_pre,layer_post,W_range,p,stdp_rate):
 
     # get torch device
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")    
@@ -182,7 +179,6 @@ def addWeights(net,layer_pre,layer_post,W_range,p,stdp_rate,fast_inhib):
             net['eta_stdp'].append(stdp_rate)
             net['eta_stdp'].append(-stdp_rate)
             net['is_inhib'].append(W_range[0]<0.0 and W_range[1]<=0.0)
-            net['fast_inhib'].append(fast_inhib and net['is_inhib'][-1])
         else:
             net['I'][Iindex] = torch.concat((net['I'][Iindex],
                                 torch.unsqueeze(torch.zeros(nrow, device=device),0)),0)
@@ -194,13 +190,12 @@ def addWeights(net,layer_pre,layer_post,W_range,p,stdp_rate,fast_inhib):
             net['W'][inhIndex][n,:,:][setzeroInh] = 0.0 # inhibitory connections
     
         # Normalise the weights (except fast inhib weights)
-        if not net['fast_inhib'][-1]:
-            nrmExc = torch.linalg.norm(net['W'][excIndex][len(net['W'][excIndex])-1],ord=1,axis=0)
-            nrmInh = torch.linalg.norm(net['W'][inhIndex][len(net['W'][inhIndex])-1],ord=1,axis=0)
-            nrmExc[nrmExc==0.0] = 1.0
-            nrmInh[nrmInh==0.0] = 1.0
-            net['W'][excIndex][n] = net['W'][excIndex][n,:,:]/nrmExc
-            net['W'][inhIndex][n] = net['W'][inhIndex][n,:,:]/nrmInh
+        nrmExc = torch.linalg.norm(net['W'][excIndex][len(net['W'][excIndex])-1],ord=1,axis=0)
+        nrmInh = torch.linalg.norm(net['W'][inhIndex][len(net['W'][inhIndex])-1],ord=1,axis=0)
+        nrmExc[nrmExc==0.0] = 1.0
+        nrmInh[nrmInh==0.0] = 1.0
+        net['W'][excIndex][n] = net['W'][excIndex][n,:,:]/nrmExc
+        net['W'][inhIndex][n] = net['W'][inhIndex][n,:,:]/nrmInh
 
     return len(net['W'])-1
     
