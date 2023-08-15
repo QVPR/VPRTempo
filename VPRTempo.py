@@ -27,6 +27,7 @@ import cv2
 import pickle
 import os
 import torch
+import blitnet
 import gc
 import math
 import timeit
@@ -38,8 +39,6 @@ sys.path.append('./settings')
 sys.path.append('./output')
 
 import numpy as np
-import BlitnetDense as blitnet
-import blitnet_ensemble as ensemble
 import validation as validate
 import matplotlib.pyplot as plt
 
@@ -58,8 +57,8 @@ class snn_model():
         '''
         USER SETTINGS
         '''
-        self.trainingPath = '/home/adam/data/hpc/' # training datapath
-        self.testPath = '/home/adam/data/testing_data/' # testing datapath
+        self.trainingPath = '/Users/adam/data/train/' # training datapath
+        self.testPath = '/Users/adam/data/test/'  # testing datapath
         self.number_training_images =1000 # alter number of training images
         self.number_testing_images = 100# alter number of testing images
         self.number_modules = 40 # number of module networks
@@ -120,7 +119,7 @@ class snn_model():
         
         # Print network details
         print('////////////')
-        print('VPRTempo - Temporally Encoded Visual Place Recognition v0.1')
+        print('VPRTempo - Temporally Encoded Visual Place Recognition v1.0.0-alpha')
         print('Queensland University of Technology, Centre for Robotics')
         print('\\\\\\\\\\\\\\\\\\\\\\\\')
         print('Theta: '+str(self.theta_max))
@@ -327,7 +326,7 @@ class snn_model():
                         net['fire_rate'][fLayer][x][:,i] = self.f_rate[0]+fstep*(i+1)
                     
                 # create the excitatory and inhibitory connections
-                idx = blitnet.addWeights(net,iLayer,fLayer,[-1,0,1],[self.p_exc,self.p_inh],self.n_init, False)
+                idx = blitnet.addWeights(net,iLayer,fLayer,[-1,0,1],[self.p_exc,self.p_inh],self.n_init)
                 weight = []
                 weight.append(idx-1)
                 weight.append(idx)    
@@ -372,7 +371,7 @@ class snn_model():
                 oLayer = blitnet.addLayer(net,[self.number_modules,1,self.output_layer],0.0,0.0,0.0,0.0,0.0,False)
 
                 # Add excitatory and inhibitory connections
-                idx = blitnet.addWeights(net,fLayer,oLayer,[-1.0,0.0,1.0],[1.0,1.0],self.n_init,False)
+                idx = blitnet.addWeights(net,fLayer,oLayer,[-1.0,0.0,1.0],[1.0,1.0],self.n_init)
                 weight.append(idx)
 
                 # Output spikes for spike forcing (final layer)
