@@ -60,9 +60,9 @@ class snn_model():
         '''
         self.trainingPath = '/home/adam/data/hpc/' # training datapath
         self.testPath = '/home/adam/data/testing_data/' # testing datapath
-        self.number_training_images =25 # alter number of training images
-        self.number_testing_images = 1000 # alter number of testing images
-        self.number_modules = 1 # number of module networks
+        self.number_training_images =1000 # alter number of training images
+        self.number_testing_images = 100# alter number of testing images
+        self.number_modules = 40 # number of module networks
         self.location_repeat = 2 # Number of training locations that are the same
         self.locations = ["fall","spring"] # which datasets are used in the training
         self.test_location = "summer"
@@ -238,7 +238,7 @@ class snn_model():
   
                  self.init_rates = torch.cat((self.init_rates, torch.reshape(data[m,:,:]/self.intensity,(n_input,)))) 
                  
-             self.init_rates = torch.unsqueeze(self.init_rates,-1)    
+             self.init_rates = torch.unsqueeze(self.init_rates,0)    
              # define the initial spike rates
              for o in range(self.number_modules):
                  if o == 0:
@@ -263,9 +263,9 @@ class snn_model():
                         init_rates = torch.cat((init_rates,
                                    torch.reshape(data[j,:,:]/self.intensity,(n_input,))),0)  
                     if m == 0:
-                        self.init_rates = torch.unsqueeze(init_rates,-1)
+                        self.init_rates = torch.unsqueeze(init_rates,0)
                     else:
-                        self.init_rates = torch.cat((self.init_rates,torch.unsqueeze(init_rates,-1)),0)
+                        self.init_rates = torch.cat((self.init_rates,torch.unsqueeze(init_rates,0)),-1)
                 
                 # output spike rates into modules
                 if o == 0: # append the location repeat initial spikes to a new module
@@ -314,9 +314,9 @@ class snn_model():
                 # create new network
                 print('Creating and setting network up')
                 net = blitnet.newNet(self.number_modules,self.imWidth*self.imHeight)
-                iLayer = blitnet.addLayer(net,[self.number_modules,self.input_layer,1],0.0,0.0,0.0,0.0,0.0,
+                iLayer = blitnet.addLayer(net,[self.number_modules,1,self.input_layer],0.0,0.0,0.0,0.0,0.0,
                                                                      False)   
-                fLayer = blitnet.addLayer(net,[self.number_modules,self.feature_layer,1],[0,self.theta_max],
+                fLayer = blitnet.addLayer(net,[self.number_modules,1,self.feature_layer],[0,self.theta_max],
                                           [self.f_rate[0],self.f_rate[1]],self.n_itp,
                                           [0,self.c],0,False)
                 
@@ -324,13 +324,14 @@ class snn_model():
                 fstep = (self.f_rate[1]-self.f_rate[0])/self.feature_layer
                 for x in range(self.number_modules):
                     for i in range(self.feature_layer):
-                        net['fire_rate'][fLayer][x][i] = self.f_rate[0]+fstep*(i+1)
+                        net['fire_rate'][fLayer][x][:,i] = self.f_rate[0]+fstep*(i+1)
                     
                 # create the excitatory and inhibitory connections
                 idx = blitnet.addWeights(net,iLayer,fLayer,[-1,0,1],[self.p_exc,self.p_inh],self.n_init, False)
                 weight = []
                 weight.append(idx-1)
-                weight.append(idx)        
+                weight.append(idx)    
+                start = timeit.default_timer()
                 
                 '''
                 Feature layer training
@@ -344,6 +345,7 @@ class snn_model():
                     net['step_num'] = 0
                     for t in range(int(self.T)):
                         blitnet.runSim(net,1,self.device,layers)
+                        torch.cuda.empty_cache()
                         # anneal learning rates
                         if np.mod(t,10)==0:
                             pt = pow(float(self.T-t)/self.T,self.annl_pow)
@@ -367,7 +369,7 @@ class snn_model():
                     blitnet.runSim(net,1,self.device,layers)
                     net['x_feat'].append(net['x'][1])
                 # Create and train the output layer with the feature layer
-                oLayer = blitnet.addLayer(net,[self.number_modules,self.output_layer,1],0.0,0.0,0.0,0.0,0.0,False)
+                oLayer = blitnet.addLayer(net,[self.number_modules,1,self.output_layer],0.0,0.0,0.0,0.0,0.0,False)
 
                 # Add excitatory and inhibitory connections
                 idx = blitnet.addWeights(net,fLayer,oLayer,[-1.0,0.0,1.0],[1.0,1.0],self.n_init,False)
@@ -380,13 +382,15 @@ class snn_model():
                 Output layer training
                 '''
                 net['spike_dims'] = 1
+                net['set_spks'][0] = []
                 layers = [len(net['W'])-2, len(net['W'])-1, len(net['W_lyr'])-1]
                 # Train the feature to output layer   
                 for epoch in range(self.epoch): # number of training epochs
                     net['step_num'] = 0
                     for t in range(self.T):
                         out_spks = torch.tensor([0],device=self.device,dtype=float)
-                        net['set_spks'][-1] = torch.tile(out_spks,(self.number_modules,self.output_layer,1))
+                        net['set_spks'][-1] = torch.tile(out_spks,(self.number_modules,1,self.output_layer))
+                        net['x'][1] = net['x_feat'][t]
                         blitnet.runSim(net,1,self.device,layers)
                         # Anneal learning rates
                         if np.mod(t,10)==0:
@@ -396,6 +400,8 @@ class snn_model():
                             net['eta_stdp'][3] = -1*self.n_init*pt
                         if int(self.T/2) - 1 == t:
                             net['step_num'] = 0
+                
+                print('Network trained in '+str(timeit.default_timer()-start)+'s')
                 # Turn off learning
                 net['eta_ip'][oLayer] = 0.0
                 net['eta_stdp'][2] = 0.0
@@ -408,7 +414,8 @@ class snn_model():
                 net['sspk_idx'] = [0,0,0]
                 net['step_num'] = 0
                 net['spikes'] = [[],[],[]]
-                    
+                net['x'] = [[],[],[]]
+                net['x_feat'] = []
                 # Output the trained network
                 outputPkl = self.training_out + 'net.pkl'
                 with open(outputPkl, 'wb') as f:
@@ -491,19 +498,27 @@ class snn_model():
         
         # set number of correct places to 0
         numcorrect = 0
+        r_n5 = 0
         net['spike_dims'] = self.input_layer
+        start = timeit.default_timer()
         for t in range(self.number_testing_images):
             tonump = np.array([])
             blitnet.testSim(net,device=self.device)
             # output the index of highest amplitude spike
-            tonump = np.append(tonump,np.reshape(net['x'][-1].detach().cpu().numpy(),(self.number_training_images,1),order='F'))
+            tonump = np.append(tonump,np.reshape(net['x'][-1].cpu().numpy(),[1,1,int(self.number_training_images)]))
             gt_ind = GT_imgnames.index(self.loadNames[t])
             nidx = np.argmax(tonump)
+            nidxpart = np.argpartition(tonump,-5)[-5:]
 
-            if nidx == gt_ind:
+            if gt_ind == nidx:
                numcorrect += 1
-        print('\033[0m'+"It took this long ",timeit.default_timer() - start)
-        print("Number of correct places "+str((numcorrect/(self.test_t*self.number_ensembles))*100)+"%")
+            if gt_ind in nidxpart:
+                r_n5 += 1
+        print('Number of correct matches P@100R - '+str((numcorrect/self.number_testing_images)*100)+'%')
+        print('Number of correct matches R@N=5 - '+str((r_n5/self.number_testing_images)*100)+'%')
+        end = timeit.default_timer()
+        queryHertz = self.number_testing_images/(end-start)
+        print('System queried at '+str(queryHertz)+'Hz')
         avPerc = 100*(avAccurate/self.number_training_images)
         ensemblename = []
         for n in range(self.number_ensembles):
@@ -623,10 +638,10 @@ Run the network
 '''        
 if __name__ == "__main__":
     model = snn_model() # Instantiate model
+    start = timeit.default_timer()
     model.train()
     model.networktester()
     # unpickle the network
-    print('Unpickling the ensemble network')
     with open(outfold+'ensemble_net.pkl', 'rb') as f:
          ensemble_net = pickle.load(f)
     

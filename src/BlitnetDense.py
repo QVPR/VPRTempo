@@ -110,7 +110,7 @@ def addLayer(net,dims,thr_range,fire_rate,ip_rate,const_inp,nois,rec_spks):
     net['thr'].append(temp_thr.uniform_(thr_range[0],thr_range[1]))
     temp_fire = torch.zeros(dims[0],dims[1],dims[2], device=device)
     net['fire_rate'].append(temp_fire.uniform_(fire_rate[0],fire_rate[1]))
-    net['have_rate'].append(any(net['fire_rate'][-1][0]>0.0))
+    net['have_rate'].append(any(net['fire_rate'][-1][:,:,0]>0.0))
 
     temp_const = torch.zeros(dims[0],dims[1],dims[2], device=device)
     net['const_inp'].append(temp_const.uniform_(const_inp[0],const_inp[1]))
@@ -142,8 +142,8 @@ def addWeights(net,layer_pre,layer_post,W_range,p,stdp_rate,fast_inhib):
     if np.isscalar(W_range): W_range = [W_range,W_range]
     
     # determine dimensions of the weight matrices
-    ncol =net['x'][layer_pre][0].size(dim=0)
-    nrow = net['x'][layer_post][0].size(dim=0)
+    nrow =net['x'][layer_pre].size(dim=2)
+    ncol = net['x'][layer_post].size(dim=2)
     
     # calculate mean and std for normal distributions
     inWmn = (W_range[0]+W_range[1])/2.0
@@ -235,6 +235,30 @@ def norm_inhib(net):
 ##################################
 # Propagate spikes thru the network
 #  net: SORN instance
+def add_spikesTest(net,device,dims):
+    
+    # Start with the constant input in the neurons of each layer
+    for i,const in enumerate(net['const_inp']):
+
+        net['x_input'][i] = torch.full_like(net['x_input'][i],0.0)
+        net['x_input'][i] += net['const_inp'][i]
+        # Find the threshold crossings (overwritten later if needed)
+            
+        net['x'][i] = torch.clamp((net['x_input'][i]-net['thr'][i]),0.0,0.9)
+    
+    # insert any predefined spikes
+    start = dims * (net['step_num'] - 1)
+    end = dims * net['step_num']
+    for i in range(len(net['set_spks'])):
+        if len(net['set_spks'][i]): # detect if any set_spks tensors
+            start = dims * (net['step_num'] - 1)
+            end = dims * net['step_num']
+            index = torch.arange(start,end,device=device,dtype=int)
+            if i == len(net['set_spks'])-1: # spike forcing
+                net['x'][i] = net['set_spks'][i].index_fill_(-1,index,0.5)
+            else:
+                net['x'][i] = torch.index_select(net['set_spks'][i],-1,index)
+
 
 
 def add_spikes(net,device,dims):
@@ -255,11 +279,13 @@ def add_spikes(net,device,dims):
     end = dims * net['step_num']
     for i in range(len(net['set_spks'])):
         if len(net['set_spks'][i]): # detect if any set_spks tensors
+            start = dims * (net['step_num'] - 1)
+            end = dims * net['step_num']
             index = torch.arange(start,end,device=device,dtype=int)
-            if (end - (start+1)) == 0: # spike forcing
-                net['x'][i] = net['set_spks'][i].index_fill_(1,index,0.5)
+            if i == len(net['set_spks'])-1: # spike forcing
+                net['x'][i] = net['set_spks'][i].index_fill_(-1,index,0.5)
             else:
-                net['x'][i] = torch.index_select(net['set_spks'][i],1,index)
+                net['x'][i] = torch.index_select(net['set_spks'][i],-1,index)
 
 def calc_spikes(net,layersInfo):  
 
@@ -270,10 +296,10 @@ def calc_spikes(net,layersInfo):
 
     # Synaptic currents last for 1 timestep
     # excitatory weights
-    net['I'][layers[0]] = torch.bmm(net['W'][excW],net['x'][layers[0]])
+    net['I'][layers[0]] = torch.bmm(net['x'][layers[0]],net['W'][excW])
     net['x_input'][layers[1]] += net['I'][layers[0]]
     #inhibitory weights
-    net['I'][layers[0]] = torch.bmm(net['W'][inhW],net['x'][layers[0]])
+    net['I'][layers[0]] = torch.bmm(net['x'][layers[0]],net['W'][inhW])
     net['x_input'][layers[1]] += net['I'][layers[0]]
     
     # adjust the spikes based on threshold
@@ -329,9 +355,8 @@ def calc_stdp(net,layerInfo):
             mpre = net['x'][layers[0]]/net['fire_rate'][layers[0]]
         else:
             mpre = net['x'][layers[0]]
-        pre = torch.tile(mpre,(1,shape[1]))
-        pre = torch.reshape(pre,(shape[0],shape[1],shape[2]))
-        post = torch.tile(xdiff,(1,shape[2]))
+        pre = torch.tile(torch.reshape(mpre,(shape[0],shape[1],1)),(1,shape[2]))
+        post = torch.tile(xdiff,(shape[1],1))
 
         # Excitatory connections
         if net['eta_stdp'][excW] > 0:
@@ -352,9 +377,8 @@ def calc_stdp(net,layerInfo):
     else:
         
         # tile out pre- and post-spikes
-        pre = torch.tile(net['x'][layers[0]],(1,shape[1]))
-        pre = torch.reshape(pre,(shape[0],shape[1],shape[2]))
-        post = torch.tile(net['x'][layers[1]],(1,shape[2]))
+        pre = torch.tile(torch.reshape(net['x'][layers[0]],(shape[0],shape[1],1)),(1,shape[2]))
+        post = torch.tile(net['x'][layers[1]],(shape[1],1))
 
         # Excitatory synapses
         havconnExc = net['W'][excW]>0
@@ -398,7 +422,7 @@ def runSim(net,n_steps,device,layers):
 def testSim(net,device):
     
     net['step_num'] += 1
-    add_spikes(net,device,net['spike_dims'])
+    add_spikesTest(net,device,net['spike_dims'])
     for n in range(int(len(net['W'])/2)): # run loop for number of layers
         layers = [int(0 + (n*2)), int(1 + (n*2)), int(0 + n)]
         calc_spikes(net,layers)
