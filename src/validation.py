@@ -69,16 +69,10 @@ def SAD(self):
                 self.sad_mat[edx] = np.append(self.sad_mat[edx],np.array(temp_vals[idx[0]:idx[1]]))
                 idx[0] = idx[0] + len(self.test_imgs)
                 idx[1] = idx[1] + len(self.test_imgs)
-        
-            yield
-        # determine if correct match
-        print('SAD: number correct '+str(100*(self.sad_correct/len(self.test_imgs)))+'%')
+
         
     # run sum of absolute differences caluclation
-    print('Calculating sum of absolute differences')
-    with alive_bar(len(self.test_imgs)) as sbar:
-       for i in run_sad():
-          sbar()    
+    run_sad()
 
     # plot the similarity matrices
     sim_mat = np.zeros(len(self.test_imgs)*len(self.test_imgs))
@@ -87,13 +81,13 @@ def SAD(self):
     #sim_mat = sim_mat/len(self.locations)
     sim_mat = np.resize(self.sad_mat['spring/'],(len(self.test_imgs),len(self.test_imgs)))
     plot_name = "Similarity Sum of Absolute Differences"
-    fig = plt.figure()
-    plt.matshow(sim_mat,fig, cmap=plt.cm.gist_gray)
-    plt.colorbar(label="Pixel intensity")
-    fig.suptitle(plot_name,fontsize = 12)
-    plt.xlabel("Query",fontsize = 12)
-    plt.ylabel("Database",fontsize = 12)
-    plt.show()
+    #fig = plt.figure()
+    #plt.matshow(sim_mat,fig, cmap=plt.cm.gist_gray)
+    #plt.colorbar(label="Pixel intensity")
+    #fig.suptitle(plot_name,fontsize = 12)
+    #plt.xlabel("Query",fontsize = 12)
+    #plt.ylabel("Database",fontsize = 12)
+    #plt.show()
     
     # run PR calculation for sum of absolute differences
     GT = np.zeros((self.test_t,self.test_t), dtype=int)
@@ -106,9 +100,9 @@ def SAD(self):
     P, R = createPR(convMat, GT, GT)
     
     # plot PR curve
-    fig = plt.figure()
-    plt.plot(R,P)
-    fig.suptitle("SAD Precision Recall curve",fontsize = 12)
-    plt.xlabel("Recall",fontsize = 12)
-    plt.ylabel("Precision",fontsize = 12)
-    plt.show()
+    #fig = plt.figure()
+    #plt.plot(R,P)
+    #fig.suptitle("SAD Precision Recall curve",fontsize = 12)
+    #plt.xlabel("Recall",fontsize = 12)
+    #plt.ylabel("Precision",fontsize = 12)
+    #plt.show()
