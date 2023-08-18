@@ -44,6 +44,7 @@ import matplotlib.pyplot as plt
 
 from os import path
 from metrics import createPR
+from halo import Halo
 
 
 '''
@@ -56,8 +57,8 @@ class snn_model():
         '''
         USER SETTINGS
         '''
-        self.trainingPath = '/Users/adam/data/train/' # training datapath
-        self.testPath = '/Users/adam/data/test/'  # testing datapath
+        self.trainingPath = '/home/adam/data/hpc/' # training datapath
+        self.testPath = '/home/adam/data/testing_data/'  # testing datapath
         self.number_training_images =1000 # alter number of training images
         self.number_testing_images = 100# alter number of testing images
         self.number_modules = 50 # number of module networks
