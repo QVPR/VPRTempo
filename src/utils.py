@@ -89,19 +89,14 @@ def loadImages(test_true,train_paths,img_names,dims,patches,testPath,testLoc):
     
     # get torch device
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu") 
-   
-    # Create dictionary of images
-    imgs = {'training':[],'testing':[]}
-    ids = {'training':[],'testing':[]}
+    
+    imgs = []
+    ids = []
     
     if test_true:
         train_paths = [testPath+testLoc+'/']
     
     for paths in train_paths:
-        if testLoc in paths:
-            dictEntry = 'testing'
-        else:
-            dictEntry = 'training'
         for m in img_names:
             fullpath = paths+m
             # read and convert image from BGR to RGB 
@@ -109,8 +104,8 @@ def loadImages(test_true,train_paths,img_names,dims,patches,testPath,testLoc):
             # convert image
             img = cv2.cvtColor(img,cv2.COLOR_RGB2GRAY)
             imgProc = processImage(img,dims,patches)
-            imgs[dictEntry].append(torch.tensor(imgProc,device=device))
-            ids[dictEntry].append(m)
+            imgs.append(torch.tensor(imgProc,device=device))
+            ids.append(m)
     
     return imgs, ids
              

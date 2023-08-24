@@ -20,6 +20,7 @@
 #OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 #SOFTWARE.
 
+        
 '''
 Imports
 '''
@@ -28,9 +29,10 @@ import pickle
 import os
 import torch
 import gc
-import timeit
-import random
 import shutil
+import wandb
+import pprint
+
 import sys
 sys.path.append('./src')
 sys.path.append('./weights')
@@ -40,10 +42,6 @@ sys.path.append('./output')
 import blitnet as bn
 import utils as ut
 import numpy as np
-import matplotlib.pyplot as plt
-
-from os import path
-from metrics import createPR
 
 
 '''
@@ -97,13 +95,10 @@ class snn_model():
         self.hpsweep = False
         
         # Hyperparamters
-        self.theta_max = 0.5 # maximum threshold value
-        self.n_init = 0.005 # initial learning rate value
-        self.n_itp = 0.15 # initial intrinsic threshold plasticity rate[[0.9999]]
-        self.f_rate = [0.2,0.9]# firing rate range
-        self.p_exc = 0.1 # probability of excitatory connection
-        self.p_inh = 0.5 # probability of inhibitory connection
-        self.c= 0.1 # constant input 
+        self.n_init = 0.005
+        self.n_itp = 0.15
+        self.theta_max = 0.5
+        self.c = 0.1
         
         # Test settings 
         self.test_true = False # leave default to False
@@ -126,22 +121,6 @@ class snn_model():
         self.fullTrainPaths = []
         for n in self.locations:
                 self.fullTrainPaths.append(self.trainingPath+n+'/')
-        
-        # Print network details
-        print('////////////')
-        print('VPRTempo - Temporally Encoded Visual Place Recognition v1.1.0-alpha')
-        print('Queensland University of Technology, Centre for Robotics')
-        print('')
-        print('© 2023 Adam D Hines, Peter G Stratton, Michael Milford, Tobias Fischer')
-        print('MIT license - https://github.com/QVPR/VPRTempo')
-        print('\\\\\\\\\\\\\\\\\\\\\\\\')
-        print('')
-        print('CUDA available: '+str(torch.cuda.is_available()))
-        if torch.cuda.is_available() == True:
-            current_device = torch.cuda.current_device()
-            print('Current device is: '+str(torch.cuda.get_device_name(current_device)))
-        else:
-            print('Current device is: CPU')
  
         # Network weights name
         self.training_out = './weights/'+str(self.input_layer)+'i'+\
@@ -149,27 +128,7 @@ class snn_model():
                                         'f'+str(self.output_layer)+\
                                             'o'+str(self.epoch)+'/'
     
-    # Check if pre-trained network exists, prompt if retrain or run        
-    def checkTrainTest(self):
-        prompt = "A network with these parameters exists, re-train network? (y/n):\n"
-        print('')
-        if path.isdir(self.training_out):
-            retrain = input(prompt)
-        else:
-            retrain = 'y'
-        return retrain
-    
     def initialize(self,condition):
-        
-        '''
-        Network startup and initialization
-        '''
-        print('')
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print(condition+' startup and initialization')    
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print('')
-        print('Loading '+condition+' images')
         
         if condition == 'testing':
             self.test_true = True
@@ -203,8 +162,8 @@ class snn_model():
     '''
     Run the training network
     '''
-    def train(self):
-
+    def train(self,f_rateL,f_rateH,p_exc,p_inh):
+        self.epoch = 4
         # remove contents of the weights folder
         if os.path.isfile(self.training_out + 'net.pkl'):
             os.remove(self.training_out+'net.pkl')
@@ -217,8 +176,7 @@ class snn_model():
         '''
         Network startup and initialization
         '''
-        
-        print('Creating network and setting weights')
+
         # create a new blitnet netowrk
         net = bn.newNet(self.number_modules,self.imWidth*self.imHeight)
         
@@ -229,37 +187,24 @@ class snn_model():
         # add the feature layer
         bn.addLayer(net,[self.number_modules,1,self.feature_layer],
                         [0,self.theta_max],
-                        [self.f_rate[0],self.f_rate[1]],
+                        [f_rateL,f_rateH],
                          self.n_itp,
                         [0,self.c],
                          0,
                          False)
         
         # sequentially set the feature firing rates for the feature layer
-        fstep = (self.f_rate[1]-self.f_rate[0])/self.feature_layer
+        fstep = (f_rateH-f_rateL)/self.feature_layer
         
         # loop through all modules and feature layer neurons
         for x in range(self.number_modules):
             for i in range(self.feature_layer):
-                net['fire_rate'][1][x][:,i] = self.f_rate[0]+fstep*(i+1)
+                net['fire_rate'][1][x][:,i] = f_rateL+fstep*(i+1)
             
         # add excitatory inhibitory connections for input and feature layer
-        bn.addWeights(net,0,1,[-1,0,1],[self.p_exc,self.p_inh],self.n_init)
-        self.init_weights = [net['W'][0].clone().detach(),net['W'][1].clone().detach()]
-
-        '''
-        Feature layer training
-        '''
-        print('')
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print('Training the input to feature layer')    
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print('')
-        
-        print('Setting spike rates from loaded images')
+        bn.addWeights(net,0,1,[-1,0,1],[p_exc,p_inh],self.n_init)
         
         # begin timer for network training
-        start = timeit.default_timer()
         # Set the spikes times for the input images
         net['set_spks'][0] = self.spike_rates['training']
         layers = [len(net['W'])-2, len(net['W'])-1, len(net['W_lyr'])-1]
@@ -267,7 +212,6 @@ class snn_model():
         # Train the feature layer
         for epoch in range(self.epoch):
             net['step_num'] = 0
-            epochStart = timeit.default_timer()
             for t in range(int(self.T)):
                 bn.runSim(net,1,self.device,layers)
                 torch.cuda.empty_cache()
@@ -277,20 +221,11 @@ class snn_model():
                     net['eta_ip'][1] = self.n_itp*pt
                     net['eta_stdp'][0] = self.n_init*pt
                     net['eta_stdp'][1] = -1*self.n_init*pt
-            print('Epoch '+str(epoch+1)+' trained in: '
-                  +str(round(timeit.default_timer()-epochStart,2))+'s')
-            print('')
-            
-        print('Finished training input to feature layer')
-        
-        '''
-        Preparations for feature to output layer training
-        '''
         
         # Turn off learning between input and feature layer
         net['eta_ip'][1] = 0.0
-        if self.p_exc > 0.0: net['eta_stdp'][0] = 0.0
-        if self.p_inh > 0.0: net['eta_stdp'][1] = 0.0
+        if p_exc > 0.0: net['eta_stdp'][0] = 0.0
+        if p_inh > 0.0: net['eta_stdp'][1] = 0.0
         
         print('Getting feature layer spikes for output layer training')
         # get the feature spikes for training the output layer
@@ -307,20 +242,9 @@ class snn_model():
 
         # Add excitatory and inhibitory connections
         bn.addWeights(net,1,2,[-1.0,0.0,1.0],[1.0,1.0],self.n_init)
-        self.init_weights.append(net['W'][2].clone().detach())
-        self.init_weights.append(net['W'][3].clone().detach())
         
         # Output spikes for spike forcing (final layer)
         out_spks = torch.tensor([0],device=self.device,dtype=float)
-
-        '''
-        Output layer training
-        '''
-        print('')
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print('Training the feature to output layer')    
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print('')
         
         net['spike_dims'] = 1 # change spike dims for output spike indexing
         net['set_spks'][0] = [] # remove input spikes
@@ -329,7 +253,6 @@ class snn_model():
         # Train the feature to output layer   
         for epoch in range(self.epoch):
             net['step_num'] = 0
-            epochStart = timeit.default_timer()
             for t in range(self.T):
                 out_spks = torch.tensor([0],device=self.device,dtype=float)
                 net['set_spks'][-1] = torch.tile(out_spks,
@@ -346,17 +269,6 @@ class snn_model():
                     net['eta_stdp'][3] = -1*self.n_init*pt
                 if int(self.T/2) - 1 == t:
                     net['step_num'] = 0     
-            print('Epoch '+str(epoch+1)+' trained in: '
-                  +str(round(timeit.default_timer()-epochStart,2))+'s')
-            print('')
-            
-        print('Finished training feature to output layer')
-        print('')
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print('Network trained in '+str(round(timeit.default_timer()-start,2))
-                                              +'s')
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print('')
         
         # Turn off learning
         net['eta_ip'][2] = 0.0
@@ -373,9 +285,6 @@ class snn_model():
         net['x'] = [[],[],[]]
         net['x_feat'] = []
         
-            
-        print('Network formatting and saving...') 
-        
         # Output the trained network
         outputPkl = self.training_out + 'net.pkl'
         with open(outputPkl, 'wb') as f:
@@ -385,172 +294,32 @@ class snn_model():
         outputPkl = self.training_out + 'GT_imgnames.pkl'
         with open(outputPkl, 'wb') as f:
             pickle.dump(self.filteredNames, f)
-        
-        print('Network succesfully saved!')
-    
-    def validate(self): 
-        
-        # unpickle the network
-        print('Unpickling the network')
-        with open(self.training_out+'net.pkl', 'rb') as f:
-             net = pickle.load(f)
-        
-        print('Validating network training')
-        # set input spikes for training data from one location
-        net['set_spks'][0] = ut.setSpikeRates(
-            self.imgs['training'][0:self.number_training_images],
-            self.ids['training'][0:self.number_training_images],
-            self.device,
-            [self.imWidth,self.imHeight],
-            True,
-            self.number_training_images,
-            self.number_modules,
-            self.intensity,
-            self.location_repeat)
-        
-        # correct place matches variable
-        numcorrect = 0
-        outconcat = np.array([])
-        
-        # run the test network on training data to evaluate network performance
-        start = timeit.default_timer()
-        for t in range(self.number_training_images):
-            tonump = np.array([])
-            bn.testSim(net,device=self.device)
-            # output the index of highest amplitude spike
-            tonump = np.append(tonump,
-                               np.reshape(net['x'][-1].cpu().numpy(),
-                              [1,1,int(self.number_training_images)]))
-            nidx = np.argmax(tonump)
-            outconcat = np.append(outconcat,tonump)
-            
-            gt_ind = self.filteredNames.index(self.filteredNames[t])
-            
-            # adjust number of correct matches if GT matches peak output
-            if gt_ind == nidx:
-               numcorrect += 1
-               
-        end = timeit.default_timer()
-        
-        # network must match >95% of training places to be succesfull
-        p100r = (numcorrect/self.number_training_images)*100
-        testFlag = (p100r>95)
-        if testFlag: # network training was successfull
-            
-            print('')
-            print('Network training successful!')
-            print('')
-            
-            print('Perfomance details:')
-            print("-------------------------------------------")
-            print('P@100R: '+str(p100r)+
-                  '%  |  Query frequency: '+
-                  str(round(self.number_training_images/(end-start),2))+'Hz')
-            
-            print('Trained on '+self.locations[0]+'/'+self.locations[1]+
-                  '  |  Queried with '+self.locations[0])
-            print('')
-            
-            # create output folder (if it does not already exist)
-            if not os.path.isdir(self.training_out):
-                os.mkdir(self.training_out)
-            if not os.path.isdir(self.training_out+'images/'):
-                os.mkdir(self.training_out+'images/')
-            if not os.path.isdir(self.training_out+'images/training/'):
-                os.mkdir(self.training_out+'images/training/')
-            
-            # plot the similarity matrix for network validation
-            concatReshape = np.reshape(outconcat,
-                                       (self.number_training_images,
-                                        self.number_training_images))
-            
-            plot_name = "Similarity: network training validation"
-            ut.plot_similarity(concatReshape,plot_name,
-                               self.training_out+'images/training/')
-            
-            # Reset network details
-            net['sspk_idx'] = [0,0,0]
-            net['step_num'] = 0
-            net['spikes'] = [[],[],[]]
-            net['x'] = [[],[],[]]
-            net['set_spks'][0] = 0
-            
-           # plot the weight matrices
-            cmap = plt.cm.magma
-            
-            print('Plotting weight matrices')
-            # initial weights
-            ut.plot_weights(self.init_weights[0],'Initial I->F Excitatory Weights',
-                            cmap,self.number_modules/5,0.5,self.training_out)
-            ut.plot_weights(self.init_weights[1], 'Initial I->F Inhibitory Weights',
-                            cmap,self.number_modules/5,0.1,self.training_out)
-            ut.plot_weights(self.init_weights[2], 'Initial F->O Excitatory Weights',
-                            cmap,self.number_modules,0.1,self.training_out)
-            ut.plot_weights(self.init_weights[3], 'Initial F->O Inhibitory Weights',
-                            cmap,self.number_modules,0.1,self.training_out)
-            
-            # calculated weights
-            ut.plot_weights(net['W'][0],'I->F Excitatory Weights',
-                            cmap,self.number_modules/5,0.5,self.training_out)
-            ut.plot_weights(net['W'][1], 'I->F Inhibitory Weights',
-                            cmap,self.number_modules/5,0.1,self.training_out)
-            ut.plot_weights(net['W'][2],'F->O Excitatory Weights',
-                            cmap,self.number_modules,0.1,self.training_out)
-            ut.plot_weights(net['W'][3], 'F->O Inhibitory Weights',
-                            cmap,self.number_modules,0.1,self.training_out)
-            
-            print('Network formatting and saving...') 
-            
-            # Output the trained network
-            outputPkl = self.training_out + 'net.pkl'
-            with open(outputPkl, 'wb') as f:
-                pickle.dump(net, f)
-                
-            # output the ground truth image names for later testing
-            outputPkl = self.training_out + 'GT_imgnames.pkl'
-            with open(outputPkl, 'wb') as f:
-                pickle.dump(self.filteredNames, f)
-            
-            print('Network succesfully saved!')
-        if self.device =='cuda':
-            gc.collect()
-            torch.cuda.empty_cache()
-        '''
+   
+    '''
      Run the testing network
      '''
 
     def networktester(self):
-         
+        self.epoch=1 
         '''
         Network startup and initialization
         '''
 
         # unpickle the network
-        print('Unpickling the network')
         with open(self.training_out+'net.pkl', 'rb') as f:
              net = pickle.load(f)
-        
-        print('Setting spike rates from loaded images')
-        # calculate input spikes from training images
-        
+
         net['set_spks'][0] = self.spike_rates['testing']
         
         # unpickle the ground truth image names
         with open(self.training_out+'GT_imgnames.pkl', 'rb') as f:
              GT_imgnames = pickle.load(f)
         
-        print('')
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print('Running test network')    
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print('')
-        
         # set number of correct places to 0
         numcorrect = 0
-
+        r_n5 = 0
         net['spike_dims'] = self.input_layer
         numpconc = np.array([])
-        start = timeit.default_timer()
         for t in range(self.number_testing_images):
             tonump = np.array([])
             bn.testSim(net,device=self.device)
@@ -559,28 +328,72 @@ class snn_model():
             numpconc = np.append(numpconc,tonump)
             gt_ind = GT_imgnames.index(self.filteredNames[t])
             nidx = np.argmax(tonump)
+            nidxpart = np.argpartition(tonump,-5)[-5:]
 
             if gt_ind == nidx:
                numcorrect += 1
+            if gt_ind in nidxpart:
+                r_n5 += 1
         
         p100r = round((numcorrect/self.number_training_images)*100,2)
-        print('Number of correct matches P@100R - '+str(p100r)+'%')
-
-        end = timeit.default_timer()
-        queryHertz = self.number_testing_images/(end-start)
-        print('System queried at '+str(round(queryHertz,2))+'Hz')
-
-
+        
+        gc.collect()
+        torch.cuda.empty_cache()
+        
+        return p100r
 '''
 Run the network
 '''        
 if __name__ == "__main__":
-    model = snn_model() # Instantiate model
-    flg = model.checkTrainTest()
-    # Create dictionary of images
-    if flg == 'y':
-        model.initialize('training')
-        model.train() # Run network training (will check if already trained)
-        #model.validate()
+    # load model
+    model = snn_model()
+    
+    # log into weights & biases
+    wandb.login()
+    
+    # define the method and parameters for grid search
+    sweep_config = {'method':'grid'}
+    metric = {'name':'p100r', 'goal':'maximize'}
+    
+    sweep_config['metric'] = metric
+    
+    parameters_dict = {   
+                       'f_rateL' :
+                           {'values' : [0.05,0.1,0.2]},
+                       'f_rateH' :
+                           {'values' : [0.8,0.9,1.0]},
+                       'p_exc' :
+                           {'values' : [0.1,0.2,0.3,0.4,0.5]},
+                       'p_inh' :
+                           {'values' : [0.1,0.2,0.3,0.4,0.5]}
+                           }
+    
+    sweep_config['parameters'] = parameters_dict
+    pprint.pprint(sweep_config)
+    
+    # start sweep controller
+    sweep_id = wandb.sweep(sweep_config, project="vprtempo-grid-search")
+    
+    # load the testing and training data for VPRTempo
+    print('Getting images and spikes for training data')
+    model.initialize('training')
+    print('Getting images and spikes for testing data')
     model.initialize('testing')
-    model.networktester() # Test the network
+    
+    # test that model works prior to running wandb
+   # print('Testing the network training prior to sweep')
+   # model.train(0.25,0.012,0.2,0.25,0.125,0.025,0.125,0.01)
+   # print('Running test data')
+   # p100r = model.networktester()
+    
+    print('Starting the w&b sweeping')
+    # initialize w&b
+    def wandsearch(config=None):
+        with wandb.init(config=config):
+            config = wandb.config
+            model.train(config.f_rateL,config.f_rateH,config.p_exc,config.p_inh)
+            
+            p100r = model.networktester()
+            wandb.log({"p100r" : p100r})
+            
+    wandb.agent(sweep_id,wandsearch)
