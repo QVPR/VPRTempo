@@ -78,17 +78,17 @@ Once these two things have been setup, run `VPRTempo.py` to train and test your 
 
 ## Training and testing benchmarks
 System benchmarks are based off the following network settings:
-| Input neurons | Feature neurons | Output neurons | Expert modules | Total network size | Training images | Epochs | Testing images |
+| Input neurons | Feature neurons | Output neurons | Expert modules | Total network size (no. neurons) | Training images | Epochs | Testing images |
 |     :---:     |      :---:      |     :---:      |     :---:      |     :----:         |   :----:        | :---:  |    :---:       |
-|      784      |      784        |       25       |      200       |      126,851,200   |   10,000        |   5    |    1,000       |
+|      784      |      1568       |       165       |      20       |      50,340   |   6,600       |   4    |    3,300      |
 
 Data presented as the average of 5 independent training and testing ± the standard deviation. 
 
 | Device | Training time (s) | Query speed (Hz) | Training PRG (%) | Query PRG (%)|
 | :---:  |   :---:           |   :---:          |          :---:   |    :---:     |
-|NVIDIA GeForce RTX 2080|32.17 ± 0.342|192.73 ± 17.07| - | - |
-|Intel® Core™ i7-9700K CPU @ 3.60GHz|1274.11 ± 287.14|16.17 ± 4.23|2.52|8.39|
-|Apple M1 Pro|
+|NVIDIA GeForce RTX 2080|46.96 ± 0.80|137.9 ± 5.48| - | - |
+|Intel® Core™ i7-9700K CPU @ 3.60GHz| ± | ± |||
+
 > **Performance relative to GPU (PRG)**
 
 ## Issues, bugs, and feature requests
