@@ -58,13 +58,13 @@ class snn_model():
         self.dataset = 'nordland' # set which dataset to run network on
         self.trainingPath = '/home/adam/data/'+self.dataset+'/' # training datapath
         self.testPath = '/home/adam/data/'+self.dataset+'/'  # testing datapath
-        self.number_training_images =1000*1# alter number of training images
-        self.number_testing_images = 1000*1 # alter number of testing images
-        self.number_modules = 1 # number of module networks
+        self.number_training_images = int(1000*3.3)# alter number of training images
+        self.number_testing_images = int(1000*3.3) # alter number of testing images
+        self.number_modules = 3 # number of module networks
         self.location_repeat = 2 # Number of training locations that are the same
         self.locations = ["fall","spring"] # which datasets are used in the training
         self.test_location = "summer"
-        self.filter = 8 # filter images every 8 seconds (equivelant to 8 images)
+        self.filter = 7 # filter images every 8 seconds (equivelant to 8 images)
         
         '''
         NETWORK SETTINGS
@@ -573,8 +573,8 @@ class snn_model():
             if gt_ind == nidx:
                numcorrect += 1
         
-        p100r = round((numcorrect/self.number_training_images)*100,2)
-        print('Number of correct matches P@100R - '+str(p100r)+'%')
+        self.p100r = round((numcorrect/self.number_training_images)*100,2)
+        print('Number of correct matches P@100R - '+str(self.p100r)+'%')
 
         end = timeit.default_timer()
         queryHertz = self.number_testing_images/(end-start)
@@ -593,7 +593,7 @@ class snn_model():
         
         # load the training images
         self.location_repeat = 1 # switch to only do SAD on one dataset traversal
-        self.fullTrainPaths = self.fullTrainPaths[0]
+        self.fullTrainPaths = self.fullTrainPaths[1]
         self.test_true = False # testing images preloaded, load the training ones
         # load the training images
         self.imgs['training'], self.ids['training'] = ut.loadImages(self.test_true,
@@ -603,19 +603,49 @@ class snn_model():
                                             self.num_patches,
                                             self.testPath,
                                             self.test_location)
+        # create database tensor
+        for ndx, n in enumerate(self.imgs['training']):
+            if ndx == 0:
+                db = torch.unsqueeze(n,0)
+            else:
+                db = torch.concat((db,torch.unsqueeze(n,0)),0)
+        
+        def calc_sad(query, database, const):
+            
+            SAD = torch.sum(torch.abs((database * const) -  (query * const)),
+                           (1,2),keepdim=True)
+            for n in range(2):
+                SAD = torch.squeeze(SAD,-1)
+            return SAD
         
         # calculate SAD for each image to database and count correct number
         imgred = 1/(self.imWidth*self.imHeight)
-        for n, ndx in enumerate(self.imgs['training']):
-            tempval = 1000000
-            for m, mdx in enumerate(self.imgs['testing']):
-                sadval = imgred*(torch.sum(torch.sub(torch.abs(mdx),torch.abs(ndx))))
-                if sadval < tempval:
-                    tempval = sadval
-                    imgidx = m
-            if n == imgidx:
+        start = timeit.default_timer()
+        for n, q in enumerate(self.imgs['testing']):
+            results = []
+            pixels = torch.empty([])
+            # create 3D tensor of query images
+            for o in range(self.number_testing_images):
+                if o == 0:
+                    pixels = torch.unsqueeze(q,0)
+                else:
+                    pixels = torch.concat((pixels,torch.unsqueeze(q,0)),0)
+                
+            sad_score = calc_sad(pixels, db, imgred)
+            
+            best_match = np.argmin(sad_score.cpu().numpy())
+            if n == best_match:
                 sadcorrect += 1
-        pause=1
+                
+        end = timeit.default_timer()   
+        p100r = round((sadcorrect/self.number_testing_images)*100,2)
+        print('Sum of absolute differences P@1: '+
+              str(p100r)+'%')
+        print('Sum of absolute differences queried at '
+              +str(round(self.number_testing_images/(end-start),2))+'Hz')
+        
+        print('Network to sum of absolute differences ratio '+
+              str(round(self.p100r/p100r,2)))
 '''
 Run the network
 '''        
