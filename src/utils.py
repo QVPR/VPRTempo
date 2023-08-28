@@ -96,9 +96,20 @@ def loadImages(test_true,train_paths,img_names,dims,patches,testPath,testLoc):
     if test_true:
         train_paths = [testPath+testLoc+'/']
     
-    for paths in train_paths:
+    if isinstance(train_paths,list):
+        for paths in train_paths:
+            for m in img_names:
+                fullpath = paths+m
+                # read and convert image from BGR to RGB 
+                img = cv2.imread(fullpath)[:,:,::-1]
+                # convert image
+                img = cv2.cvtColor(img,cv2.COLOR_RGB2GRAY)
+                imgProc = processImage(img,dims,patches)
+                imgs.append(torch.tensor(imgProc,device=device))
+                ids.append(m)
+    else:
         for m in img_names:
-            fullpath = paths+m
+            fullpath = train_paths+m
             # read and convert image from BGR to RGB 
             img = cv2.imread(fullpath)[:,:,::-1]
             # convert image

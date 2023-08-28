@@ -54,15 +54,16 @@ class snn_model():
         '''
         USER SETTINGS
         '''
-        self.trainingPath = '/home/adam/data/hpc/' # training datapath
-        self.testPath = '/home/adam/data/testing_data/'  # testing datapath
-        self.number_training_images =3300 # alter number of training images
-        self.number_testing_images = 3300# alter number of testing images
-        self.number_modules = 20 # number of module networks
+        self.dataset = 'orc' # set which dataset to run network on
+        self.trainingPath = '/home/adam/data/'+self.dataset+'/' # training datapath
+        self.testPath = '/home/adam/data/'+self.dataset+'/'  # testing datapath
+        self.number_training_images = 450 # alter number of training images
+        self.number_testing_images = 450# alter number of testing images
+        self.number_modules = 5 # number of module networks
         self.location_repeat = 2 # Number of training locations that are the same
-        self.locations = ["fall","spring"] # which datasets are used in the training
-        self.test_location = "summer"
-        self.filter = 8 # filter images every 8 seconds (equivelant to 8 images)
+        self.locations = ["Sun","Rain"] # which datasets are used in the training
+        self.test_location = "Dusk"
+        self.filter = 7 # filter images every 8 seconds (equivelant to 8 images)
         
         '''
         NETWORK SETTINGS
@@ -95,10 +96,7 @@ class snn_model():
         self.hpsweep = False
         
         # Hyperparamters
-        self.n_init = 0.005
         self.n_itp = 0.15
-        self.theta_max = 0.5
-        self.c = 0.1
         
         # Test settings 
         self.test_true = False # leave default to False
@@ -108,7 +106,7 @@ class snn_model():
         DATA SETTINGS
         '''
         # Select training images from list
-        with open('./nordland_imageNames.txt') as file:
+        with open('./'+self.dataset+'_imageNames.txt') as file:
             self.imageNames = [line.rstrip() for line in file]
             
         # Filter the loading images based on self.filter
@@ -162,7 +160,7 @@ class snn_model():
     '''
     Run the training network
     '''
-    def train(self,f_rateL,f_rateH,p_exc,p_inh):
+    def train(self,f_rateL,f_rateH,p_exc,p_inh,n_init,c,theta_max):
         self.epoch = 4
         # remove contents of the weights folder
         if os.path.isfile(self.training_out + 'net.pkl'):
@@ -186,10 +184,10 @@ class snn_model():
         
         # add the feature layer
         bn.addLayer(net,[self.number_modules,1,self.feature_layer],
-                        [0,self.theta_max],
+                        [0,theta_max],
                         [f_rateL,f_rateH],
                          self.n_itp,
-                        [0,self.c],
+                        [0,c],
                          0,
                          False)
         
@@ -202,7 +200,7 @@ class snn_model():
                 net['fire_rate'][1][x][:,i] = f_rateL+fstep*(i+1)
             
         # add excitatory inhibitory connections for input and feature layer
-        bn.addWeights(net,0,1,[-1,0,1],[p_exc,p_inh],self.n_init)
+        bn.addWeights(net,0,1,[-1,0,1],[p_exc,p_inh],n_init)
         
         # begin timer for network training
         # Set the spikes times for the input images
@@ -219,8 +217,8 @@ class snn_model():
                 if np.mod(t,10)==0:
                     pt = pow(float(self.T-t)/self.T,self.annl_pow)
                     net['eta_ip'][1] = self.n_itp*pt
-                    net['eta_stdp'][0] = self.n_init*pt
-                    net['eta_stdp'][1] = -1*self.n_init*pt
+                    net['eta_stdp'][0] = n_init*pt
+                    net['eta_stdp'][1] = -1*n_init*pt
         
         # Turn off learning between input and feature layer
         net['eta_ip'][1] = 0.0
@@ -241,7 +239,7 @@ class snn_model():
                     0.0,0.0,0.0,0.0,0.0,False)
 
         # Add excitatory and inhibitory connections
-        bn.addWeights(net,1,2,[-1.0,0.0,1.0],[1.0,1.0],self.n_init)
+        bn.addWeights(net,1,2,[-1.0,0.0,1.0],[1.0,1.0],n_init)
         
         # Output spikes for spike forcing (final layer)
         out_spks = torch.tensor([0],device=self.device,dtype=float)
@@ -265,8 +263,8 @@ class snn_model():
                 if np.mod(t,10)==0:
                     pt = pow(float(self.T-t)/(self.T),self.annl_pow)
                     net['eta_ip'][2] = self.n_itp*pt
-                    net['eta_stdp'][2] = self.n_init*pt
-                    net['eta_stdp'][3] = -1*self.n_init*pt
+                    net['eta_stdp'][2] = n_init*pt
+                    net['eta_stdp'][3] = -1*n_init*pt
                 if int(self.T/2) - 1 == t:
                     net['step_num'] = 0     
         
@@ -352,20 +350,26 @@ if __name__ == "__main__":
     wandb.login()
     
     # define the method and parameters for grid search
-    sweep_config = {'method':'grid'}
+    sweep_config = {'method':'random'}
     metric = {'name':'p100r', 'goal':'maximize'}
     
     sweep_config['metric'] = metric
     
     parameters_dict = {   
                        'f_rateL' :
-                           {'values' : [0.05,0.1,0.2]},
+                           {'values' : [0.5,0.6,0.7]},
                        'f_rateH' :
-                           {'values' : [0.8,0.9,1.0]},
+                           {'values' : [0.85,0.80,0.95]},
                        'p_exc' :
-                           {'values' : [0.1,0.2,0.3,0.4,0.5]},
+                           {'values' : [0.25,0.3]},
                        'p_inh' :
-                           {'values' : [0.1,0.2,0.3,0.4,0.5]}
+                           {'values' : [0.3,0.4]},
+                       'n_init' : 
+                            {'values' : [0.005]},
+                       'c' :
+                           {'values' : [0.1]},
+                       'theta_max' :
+                           {'values' : [0.01,0.05,0.1]}
                            }
     
     sweep_config['parameters'] = parameters_dict
@@ -391,7 +395,8 @@ if __name__ == "__main__":
     def wandsearch(config=None):
         with wandb.init(config=config):
             config = wandb.config
-            model.train(config.f_rateL,config.f_rateH,config.p_exc,config.p_inh)
+            model.train(config.f_rateL,config.f_rateH,config.p_exc,config.p_inh,
+                        config.n_init,config.c,config.theta_max)
             
             p100r = model.networktester()
             wandb.log({"p100r" : p100r})
