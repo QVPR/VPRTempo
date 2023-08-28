@@ -23,11 +23,10 @@
 '''
 Imports
 '''
-import matplotlib.pyplot as plt
+
 import numpy as np
-from alive_progress import alive_bar
 from operator import add
-from metrics import createPR
+
 
 # Sum of Absolute Differences (SAD) calculation for images
 def SAD(self):
@@ -73,36 +72,3 @@ def SAD(self):
         
     # run sum of absolute differences caluclation
     run_sad()
-
-    # plot the similarity matrices
-    sim_mat = np.zeros(len(self.test_imgs)*len(self.test_imgs))
-    #for n in self.sad_mat:
-       # sim_mat = sim_mat + self.sad_mat[n]
-    #sim_mat = sim_mat/len(self.locations)
-    sim_mat = np.resize(self.sad_mat['spring/'],(len(self.test_imgs),len(self.test_imgs)))
-    plot_name = "Similarity Sum of Absolute Differences"
-    #fig = plt.figure()
-    #plt.matshow(sim_mat,fig, cmap=plt.cm.gist_gray)
-    #plt.colorbar(label="Pixel intensity")
-    #fig.suptitle(plot_name,fontsize = 12)
-    #plt.xlabel("Query",fontsize = 12)
-    #plt.ylabel("Database",fontsize = 12)
-    #plt.show()
-    
-    # run PR calculation for sum of absolute differences
-    GT = np.zeros((self.test_t,self.test_t), dtype=int)
-    for n in range(len(GT)):
-        GT[n,n] = 1
-        
-    # invert the similarity matrix so that smaller values are the highest
-    invMat = sim_mat*-1
-    convMat = invMat + (np.min(invMat)*-1) + 1
-    P, R = createPR(convMat, GT, GT)
-    
-    # plot PR curve
-    #fig = plt.figure()
-    #plt.plot(R,P)
-    #fig.suptitle("SAD Precision Recall curve",fontsize = 12)
-    #plt.xlabel("Recall",fontsize = 12)
-    #plt.ylabel("Precision",fontsize = 12)
-    #plt.show()

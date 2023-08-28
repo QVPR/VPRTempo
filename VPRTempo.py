@@ -29,7 +29,6 @@ import os
 import torch
 import gc
 import timeit
-import random
 import shutil
 import sys
 sys.path.append('./src')
@@ -56,11 +55,12 @@ class snn_model():
         '''
         USER SETTINGS
         '''
-        self.trainingPath = '/home/adam/data/hpc/' # training datapath
-        self.testPath = '/home/adam/data/testing_data/'  # testing datapath
-        self.number_training_images =3300 # alter number of training images
-        self.number_testing_images = 3300# alter number of testing images
-        self.number_modules = 20 # number of module networks
+        self.dataset = 'nordland' # set which dataset to run network on
+        self.trainingPath = '/home/adam/data/'+self.dataset+'/' # training datapath
+        self.testPath = '/home/adam/data/'+self.dataset+'/'  # testing datapath
+        self.number_training_images =1000*1# alter number of training images
+        self.number_testing_images = 1000*1 # alter number of testing images
+        self.number_modules = 1 # number of module networks
         self.location_repeat = 2 # Number of training locations that are the same
         self.locations = ["fall","spring"] # which datasets are used in the training
         self.test_location = "summer"
@@ -100,7 +100,7 @@ class snn_model():
         self.theta_max = 0.5 # maximum threshold value
         self.n_init = 0.005 # initial learning rate value
         self.n_itp = 0.15 # initial intrinsic threshold plasticity rate[[0.9999]]
-        self.f_rate = [0.2,0.9]# firing rate range
+        self.f_rate = [0.2,0.9] # firing rate range
         self.p_exc = 0.1 # probability of excitatory connection
         self.p_inh = 0.5 # probability of inhibitory connection
         self.c= 0.1 # constant input 
@@ -113,13 +113,14 @@ class snn_model():
         DATA SETTINGS
         '''
         # Select training images from list
-        with open('./nordland_imageNames.txt') as file:
+        with open('./'+self.dataset+'_imageNames.txt') as file:
             self.imageNames = [line.rstrip() for line in file]
             
         # Filter the loading images based on self.filter
         self.filteredNames = []
         for n in range(0,len(self.imageNames),self.filter):
             self.filteredNames.append(self.imageNames[n])
+        #random.shuffle(self.filteredNames)
         del self.filteredNames[self.number_training_images:len(self.filteredNames)]
         
         # Get the full training and testing data paths    
@@ -283,6 +284,8 @@ class snn_model():
             
         print('Finished training input to feature layer')
         
+        # delete the training images
+        
         '''
         Preparations for feature to output layer training
         '''
@@ -387,6 +390,12 @@ class snn_model():
             pickle.dump(self.filteredNames, f)
         
         print('Network succesfully saved!')
+        
+        # if using cuda, clear and dump the memory usage
+        if self.device =='cuda':
+            del self.spike_rates
+            gc.collect()
+            torch.cuda.empty_cache()
     
     def validate(self): 
         
@@ -549,14 +558,15 @@ class snn_model():
         numcorrect = 0
 
         net['spike_dims'] = self.input_layer
-        numpconc = np.array([])
+        #numpconc = np.array([])
         start = timeit.default_timer()
         for t in range(self.number_testing_images):
             tonump = np.array([])
             bn.testSim(net,device=self.device)
             # output the index of highest amplitude spike
-            tonump = np.append(tonump,np.reshape(net['x'][-1].cpu().numpy(),[1,1,int(self.number_training_images)]))
-            numpconc = np.append(numpconc,tonump)
+            tonump = np.append(tonump,np.reshape(net['x'][-1].cpu().numpy(),
+                                       [1,1,int(self.number_training_images)]))
+            #numpconc = np.append(numpconc,tonump)
             gt_ind = GT_imgnames.index(self.filteredNames[t])
             nidx = np.argmax(tonump)
 
@@ -569,8 +579,43 @@ class snn_model():
         end = timeit.default_timer()
         queryHertz = self.number_testing_images/(end-start)
         print('System queried at '+str(round(queryHertz,2))+'Hz')
-
-
+        
+        # if using cuda, clear and dump the memory usage
+        if self.device =='cuda':
+            gc.collect()
+            torch.cuda.empty_cache()
+    
+    '''
+    Compare results to sum of absolute differences
+    '''        
+    def sad(self):
+        sadcorrect = 0
+        
+        # load the training images
+        self.location_repeat = 1 # switch to only do SAD on one dataset traversal
+        self.fullTrainPaths = self.fullTrainPaths[0]
+        self.test_true = False # testing images preloaded, load the training ones
+        # load the training images
+        self.imgs['training'], self.ids['training'] = ut.loadImages(self.test_true,
+                                            self.fullTrainPaths,
+                                            self.filteredNames,
+                                            [self.imWidth,self.imHeight],
+                                            self.num_patches,
+                                            self.testPath,
+                                            self.test_location)
+        
+        # calculate SAD for each image to database and count correct number
+        imgred = 1/(self.imWidth*self.imHeight)
+        for n, ndx in enumerate(self.imgs['training']):
+            tempval = 1000000
+            for m, mdx in enumerate(self.imgs['testing']):
+                sadval = imgred*(torch.sum(torch.sub(torch.abs(mdx),torch.abs(ndx))))
+                if sadval < tempval:
+                    tempval = sadval
+                    imgidx = m
+            if n == imgidx:
+                sadcorrect += 1
+        pause=1
 '''
 Run the network
 '''        
@@ -584,3 +629,4 @@ if __name__ == "__main__":
         #model.validate()
     model.initialize('testing')
     model.networktester() # Test the network
+    model.sad() # compare results to sum of absolute differences
