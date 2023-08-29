@@ -42,7 +42,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from os import path
-from metrics import createPR
+from metrics import createPR, createSADPR
 
 
 '''
@@ -58,13 +58,13 @@ class snn_model():
         self.dataset = 'nordland' # set which dataset to run network on
         self.trainingPath = '/home/adam/data/'+self.dataset+'/' # training datapath
         self.testPath = '/home/adam/data/'+self.dataset+'/'  # testing datapath
-        self.number_training_images = int(1000*3.3)# alter number of training images
-        self.number_testing_images = int(1000*3.3) # alter number of testing images
         self.number_modules = 3 # number of module networks
+        self.number_training_images = 3300 # alter number of training images
+        self.number_testing_images = 3300 # alter number of testing images
         self.location_repeat = 2 # Number of training locations that are the same
         self.locations = ["fall","spring"] # which datasets are used in the training
         self.test_location = "summer"
-        self.filter = 7 # filter images every 8 seconds (equivelant to 8 images)
+        self.filter = 1 # filter images every 8 seconds (equivelant to 8 images)
         
         '''
         NETWORK SETTINGS
@@ -558,7 +558,7 @@ class snn_model():
         numcorrect = 0
 
         net['spike_dims'] = self.input_layer
-        #numpconc = np.array([])
+        numpconc = np.array([])
         start = timeit.default_timer()
         for t in range(self.number_testing_images):
             tonump = np.array([])
@@ -566,12 +566,14 @@ class snn_model():
             # output the index of highest amplitude spike
             tonump = np.append(tonump,np.reshape(net['x'][-1].cpu().numpy(),
                                        [1,1,int(self.number_training_images)]))
-            #numpconc = np.append(numpconc,tonump)
             gt_ind = GT_imgnames.index(self.filteredNames[t])
             nidx = np.argmax(tonump)
 
             if gt_ind == nidx:
                numcorrect += 1
+            
+            if self.validation: # get similarity matrix for PR curve generation
+                numpconc = np.append(numpconc,tonump)
         
         self.p100r = round((numcorrect/self.number_training_images)*100,2)
         print('Number of correct matches P@100R - '+str(self.p100r)+'%')
@@ -580,6 +582,38 @@ class snn_model():
         queryHertz = self.number_testing_images/(end-start)
         print('System queried at '+str(round(queryHertz,2))+'Hz')
         
+        # if self.validation = True, get PR information and plot similarity matrix
+        if self.validation:
+            
+            # reshape similarity matrix
+            sim_mat = np.reshape(numpconc,(self.number_training_images,
+                                               self.number_testing_images))
+            
+            # plot the similarity matrix
+            fig = plt.figure()
+            plt.matshow(sim_mat,fig,cmap='tab20c')
+            plt.colorbar(label="Spike amplitude")
+            fig.suptitle("Similarity matrix",fontsize = 12)
+            plt.xlabel("Query",fontsize = 12)
+            plt.ylabel("Databse",fontsize = 12)
+            plt.show()
+            
+            # generate the ground truth matrix
+            GT = np.zeros((self.number_training_images,self.number_testing_images), dtype=int)
+            for n in range(len(GT)):
+                GT[n,n] = 1
+                
+            # get the P & R 
+            P,R = createPR(sim_mat, GT, GT)
+            
+            # make the PR curve
+            fig = plt.figure()
+            plt.plot(R,P)
+            fig.suptitle("Precision Recall curve",fontsize = 12)
+            plt.xlabel("Recall",fontsize = 12)
+            plt.ylabel("Precision",fontsize = 12)
+            plt.show()
+            
         # if using cuda, clear and dump the memory usage
         if self.device =='cuda':
             gc.collect()
@@ -589,6 +623,13 @@ class snn_model():
     Compare results to sum of absolute differences
     '''        
     def sad(self):
+        
+        print('')
+        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+        print('Setting up Sum of Absolute Differences (SAD) calculations')    
+        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+        print('')
+        
         sadcorrect = 0
         
         # load the training images
@@ -620,6 +661,8 @@ class snn_model():
         
         # calculate SAD for each image to database and count correct number
         imgred = 1/(self.imWidth*self.imHeight)
+        sad_concat = np.array([])
+        print('Running SAD')
         start = timeit.default_timer()
         for n, q in enumerate(self.imgs['testing']):
             results = []
@@ -637,8 +680,12 @@ class snn_model():
             if n == best_match:
                 sadcorrect += 1
                 
+            if self.validation:
+                sad_concat = np.append(sad_concat,sad_score.cpu().numpy())
+                
         end = timeit.default_timer()   
         p100r = round((sadcorrect/self.number_testing_images)*100,2)
+        print('')
         print('Sum of absolute differences P@1: '+
               str(p100r)+'%')
         print('Sum of absolute differences queried at '
@@ -646,6 +693,37 @@ class snn_model():
         
         print('Network to sum of absolute differences ratio '+
               str(round(self.p100r/p100r,2)))
+
+        if self.validation:
+            # reshape similarity matrix
+            sim_mat = np.reshape(sad_concat,(self.number_training_images,
+                                               self.number_testing_images))
+            
+            # plot the similarity matrix
+            fig = plt.figure()
+            plt.matshow(sim_mat,fig,cmap='Greys')
+            plt.colorbar(label="Sum of absolute differences")
+            fig.suptitle("Similarity matrix - SAD",fontsize = 12)
+            plt.xlabel("Query",fontsize = 12)
+            plt.ylabel("Databse",fontsize = 12)
+            plt.show()
+            
+            # generate the ground truth matrix
+            GT = np.zeros((self.number_training_images,self.number_testing_images), dtype=int)
+            for n in range(len(GT)):
+                GT[n,n] = 1
+                
+            # get the P & R 
+            P,R = createPR(sim_mat, GT, GT)
+            
+            # make the PR curve
+            fig = plt.figure()
+            plt.plot(R,P)
+            fig.suptitle("SAD Precision Recall curve",fontsize = 12)
+            plt.xlabel("Recall",fontsize = 12)
+            plt.ylabel("Precision",fontsize = 12)
+            plt.show()
+            pause=1
 '''
 Run the network
 '''        
