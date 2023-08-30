@@ -15,12 +15,10 @@ We recommend installing dependencies for VPRTempo with [Mambaforge](https://mamb
 
 ### Windows & Linux
 #### CUDA enabled installation
-First, download and install the [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) and follow the installation instructions for your hardware specifications.
-
-Once installed, create the new environment and install Python + dependencies.
+Use conda/mamba to create a new environment and install Python, CUDA tools, and dependencies.
 
 ```console
-mamba create -n vprtempo -c pytorch -c nvidia python torchvision torchaudio pytorch-cuda=11.7 opencv matplotlib halo
+conda create -n vprtempo -c pytorch -c nvidia python torchvision torchaudio pytorch-cuda=11.7 cudatools opencv matplotlib
 ```
 > **Note**
 > Install the version of PyTorch-CUDA that is compatible with your graphics card, see [Start Locally | PyTorch](https://pytorch.org/get-started/locally/) for more details.
@@ -31,11 +29,11 @@ When running the code, it will automatically detect and print the device being u
 import torch
 
 print('CUDA available: '+str(torch.cuda.is_available()))
-        if torch.cuda.is_available() == True:
-            current_device = torch.cuda.current_device()
-            print('Current device is: '+str(torch.cuda.get_device_name(current_device)))
-        else:
-            print('Current device is: CPU')
+if torch.cuda.is_available() == True:
+        current_device = torch.cuda.current_device()
+        print('Current device is: '+str(torch.cuda.get_device_name(current_device)))
+else:
+        print('Current device is: CPU')
 
 > CUDA available: True
 > Current device is: NVIDIA GeForce RTX 2080
@@ -49,12 +47,12 @@ If CUDA was not installed correctly, the output will be:
 #### CPU only
 To install using the CPU only, simply install Python + dependencies.
 ```console
-mamba create -n vprtempo python pytorch torchvision torchaudio cpuonly opencv matplotlib halo -c pytorch
+conda create -n vprtempo python pytorch torchvision torchaudio cpuonly opencv matplotlib halo -c pytorch
 ```
 ### MacOS
 CUDA acceleration is not available on MacOS and the network will only use the CPU, so simply just need to install Python + dependencies.
 ```console
-mamba create -n vprtempo -c conda-forge python opencv matplotlib halo -c pytorch pytorch::pytorch torchvision torchaudio
+conda create -n vprtempo -c conda-forge python opencv matplotlib halo -c pytorch pytorch::pytorch torchvision torchaudio
 ```
 
 ### Get the repository
