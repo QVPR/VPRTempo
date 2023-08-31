@@ -32,6 +32,8 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 
+from metrics import recallAtK
+
 def get_patches2D(patch_size,image_pad):
     
     if patch_size[0] % 2 == 0: 
@@ -221,5 +223,134 @@ def plot_weights(W,name,cmap,div,vmax,outfold):
     plt.xlabel("x-weights",fontsize = 12)
     plt.ylabel("y-weights",fontsize = 12)
     plt.show()
+    fig.savefig(outfold+name+'.png')
     
-    fig.savefig(outfold+'images/training/'+name+'.png')
+# run recallAtK() function from VPR Tutorial
+def recallAtN(S_in, GThard, GTsoft, N):
+    
+    # run recall at N over each value of N
+    recall_list = []
+    for n in N:
+        recall_list.append(recallAtK(S_in, GThard, GTsoft, K=n))
+        
+    return recall_list
+      
+def sad(self):
+    
+    print('')
+    print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+    print('Setting up Sum of Absolute Differences (SAD) calculations')    
+    print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+    print('')
+    
+    sadcorrect = 0
+    
+    # load the training images
+    self.location_repeat = 1 # switch to only do SAD on one dataset traversal
+    self.fullTrainPaths = self.fullTrainPaths[1]
+    self.test_true = False # testing images preloaded, load the training ones
+    # load the training images
+    self.imgs['training'], self.ids['training'] = ut.loadImages(self.test_true,
+                                        self.fullTrainPaths,
+                                        self.filteredNames,
+                                        [self.imWidth,self.imHeight],
+                                        self.num_patches,
+                                        self.testPath,
+                                        self.test_location)
+    
+    # create database tensor
+    for ndx, n in enumerate(self.imgs['training']):
+        if ndx == 0:
+            db = torch.unsqueeze(n,0)
+        else:
+            db = torch.concat((db,torch.unsqueeze(n,0)),0)
+    
+    def calc_sad(query, database, const):
+        
+        SAD = torch.sum(torch.abs((database * const) -  (query * const)),
+                       (1,2),keepdim=True)
+        for n in range(2):
+            SAD = torch.squeeze(SAD,-1)
+        return SAD
+    
+    # calculate SAD for each image to database and count correct number
+    imgred = 1/(self.imWidth*self.imHeight)
+    sad_concat = np.array([])
+    print('Running SAD')
+    start = timeit.default_timer()
+    for n, q in enumerate(self.imgs['testing']):
+        results = []
+        pixels = torch.empty([])
+        # create 3D tensor of query images
+        for o in range(self.number_testing_images):
+            if o == 0:
+                pixels = torch.unsqueeze(q,0)
+            else:
+                pixels = torch.concat((pixels,torch.unsqueeze(q,0)),0)
+            
+        sad_score = calc_sad(pixels, db, imgred)
+        
+        best_match = np.argmin(sad_score.numpy())
+        if n == best_match:
+            sadcorrect += 1
+            
+        if self.validation:
+            sad_concat = np.append(sad_concat,sad_score.cpu().numpy())
+            
+    end = timeit.default_timer()   
+    p100r = round((sadcorrect/self.number_testing_images)*100,2)
+    print('')
+    print('Sum of absolute differences P@1: '+
+          str(p100r)+'%')
+    print('Sum of absolute differences queried at '
+          +str(round(self.number_testing_images/(end-start),2))+'Hz')
+    
+    print('Network to sum of absolute differences ratio '+
+          str(round(self.p100r/p100r,2)))
+
+    if self.validation:
+        # reshape similarity matrix
+        sim_mat = np.reshape(sad_concat,(self.number_training_images,
+                                           self.number_testing_images))
+        
+        # plot the similarity matrix
+        fig = plt.figure()
+        plt.matshow(sim_mat,fig,cmap='Greys')
+        plt.colorbar(label="Sum of absolute differences")
+        fig.suptitle("Similarity matrix - SAD",fontsize = 12)
+        plt.xlabel("Query",fontsize = 12)
+        plt.ylabel("Databse",fontsize = 12)
+        plt.show()
+        
+        # generate the ground truth matrix
+        GT = np.zeros((self.number_training_images,self.number_testing_images), dtype=int)
+        for n in range(len(GT)):
+            GT[n,n] = 1
+            
+        # get the P & R 
+        sim_invert = 1/sim_mat # invert matrix so lowest SAD is highest value
+        P,R = createPR(sim_invert, GT, GT)
+        
+        # make the PR curve
+        fig = plt.figure()
+        plt.plot(R,P)
+        fig.suptitle("SAD Precision Recall curve",fontsize = 12)
+        plt.xlabel("Recall",fontsize = 12)
+        plt.ylabel("Precision",fontsize = 12)
+        plt.show()
+        
+        # calculate the recall at N
+        rn1 = recallAtK(sim_invert, GT, GT, K=1)
+        rn5 = recallAtK(sim_invert, GT, GT, K=5)
+        rn10 = recallAtK(sim_invert, GT, GT, K=10)
+        rn15 = recallAtK(sim_invert, GT, GT, K=15)
+        rn20 = recallAtK(sim_invert, GT, GT, K=20)
+        rn25 = recallAtK(sim_invert, GT, GT, K=25)
+        
+        print('')
+        print('Recall at N='+str(1)+': '+str(rn1))
+        print('Recall at N='+str(5)+': '+str(rn5))
+        print('Recall at N='+str(10)+': '+str(rn10))
+        print('Recall at N='+str(15)+': '+str(rn15))
+        print('Recall at N='+str(20)+': '+str(rn20))
+        print('Recall at N='+str(25)+': '+str(rn25))
