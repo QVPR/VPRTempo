@@ -64,55 +64,49 @@ cd ~/VPRTempo
 ```
 
 ## Datasets
+
+### Nordland
 VPRTempo was developed and tested using the [Nordland](https://webdiis.unizar.es/~jmfacil/pr-nordland/#download-dataset) dataset, an approximately 729km traverse of the Nordland Railway in Norway recorded over the 4 seasons - Spring, Fall, Summer, & Winter. This software will work for either the full-resolution or down-sampled datasets, however our paper details the full-resolution datasets. 
 
+To simplify first usage, we have set the defaults in `VPRTempo.py` to train and test on a small subset of Nordland data. We recommend [downloading Nordland](https://webdiis.unizar.es/~jmfacil/pr-nordland/#download-dataset) and using the `./src/nordland.py` script to unzip and organize the images into the correct file structure.
+
+### Custom datasets
 In general, data should be organised in the following way in order to train the network on multiple traversals of the same location.
 
 ```
---Dataset
-  |--Training
-  |  |--Traversal_1
-  |  |--Traversal_2
-  |  |-- ...
-  |  |--Traversal_n
+--dataset
+  |--training
+  |  |--traversal_1
+  |  |--traversal_2
   |
-  |--Testing
-  |  |--Test_traversal
+  |--testing
+  |  |--test_traversal
 ```
 Speicfy the datapaths by altering `self.trainingPath` and `self.testPath` in lines 60 and 61 of `VPRTempo.py`. You can specify which traversals you want to train and test on by also altering `self.locations` and `self.test_location` in lines 66 and 67. In the case above it would be the following; 
 
 ```python
-60 self.trainingPath = '<path_to_data>/Training/
-61 self.testPath = '<path_to_data>/Testing/
+60 self.trainingPath = '<path_to_data>/training/
+61 self.testPath = '<path_to_data>/testing/
 
-66 self.locations = ["Traversal_1,Traversal_2"]
-67 self.test_location = "Test_traversal"
+66 self.locations = ["traversal_1","traversal_2"]
+67 self.test_location = "test_traversal"
 ```
 
 Image names for the same locations across traversals (training and testing) must be the same as they are imported based on a `.txt` file. We provide an easy tool in `./src/generate_names.py` that will go through and make sure all the names are the same and generate a `.txt` file of image names and store it in the main folder.
 
+Once this has been done, you need to set `self.dataset` in line 59 to the name of the dataset being trained and tested so it can load the correct `.txt` filename.
+
+```python
+59 self.dataset = 'dataset'
+```
+
 ## Usage
-Both the training and testing is handled by the `VPRTempo.py` script. Initial installs do not contain any pre-defined networks and will need to be trained prior to use. There are only two pre-requisites for running the network.
+Both the training and testing is handled by the `VPRTempo.py` script. Initial installs do not contain any pre-defined networks and will need to be trained prior to use.
 ### Pre-requisites
-* The Nordland dataset is downloaded wih the Spring and Fall images from sections 1 & 2 placed into a their own folders (training data), and the Summer images similarly placed in another separate folder (testing data).
-* Edit lines 61 & 62 of `VPRTempo.py` to your local training and testing folders
+* Training and testing data is organized as above (see **Datasets** on how to set up the Nordland or custom datasets)
+* The VPRTempo `conda` environment has been activated
 
 Once these two things have been setup, run `VPRTempo.py` to train and test your first network with the default settings. 
-
-## Training and testing benchmarks
-System benchmarks are based off the following network settings:
-| Input neurons | Feature neurons | Output neurons | Expert modules | Total network size (no. neurons) | Training images | Epochs | Testing images |
-|     :---:     |      :---:      |     :---:      |     :---:      |     :----:         |   :----:        | :---:  |    :---:       |
-|      784      |      1568       |       165       |      20       |      50,340   |   6,600       |   4    |    3,300      |
-
-Data presented as the average of 5 independent training and testing ± the standard deviation. 
-
-| Device | Training time (s) | Query speed (Hz) | Training PRG (%) | Query PRG (%)|
-| :---:  |   :---:           |   :---:          |          :---:   |    :---:     |
-|NVIDIA GeForce RTX 2080|46.96 ± 0.80|137.9 ± 5.48| - | - |
-|Intel® Core™ i7-9700K CPU @ 3.60GHz| ± | ± |||
-
-> **Performance relative to GPU (PRG)**
 
 ## Issues, bugs, and feature requests
 If you encounter problems whilst running the code or if you have a suggestion for a feature or improvement, please report it as an [issue](https://github.com/QVPR/VPRTempo/issues).
