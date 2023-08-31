@@ -42,7 +42,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from os import path
-from metrics import createPR, createSADPR
+from metrics import createPR
+from datetime import datetime
 
 
 '''
@@ -56,15 +57,22 @@ class snn_model():
         USER SETTINGS
         '''
         self.dataset = 'nordland' # set which dataset to run network on
-        self.trainingPath = '/home/adam/data/'+self.dataset+'/' # training datapath
-        self.testPath = '/home/adam/data/'+self.dataset+'/'  # testing datapath
-        self.number_modules = 3 # number of module networks
-        self.number_training_images = 3300 # alter number of training images
-        self.number_testing_images = 3300 # alter number of testing images
-        self.location_repeat = 2 # Number of training locations that are the same
-        self.locations = ["fall","spring"] # which datasets are used in the training
-        self.test_location = "summer"
-        self.filter = 1 # filter images every 8 seconds (equivelant to 8 images)
+        self.trainingPath = '/home/adam/data/nordland/training/' # training datapath
+        self.testPath = '/home/adam/data/nordland/testing/'  # testing datapath
+        self.number_modules = 1 # number of module networks
+        self.number_training_images = 500 # Alter number of training images
+        self.number_testing_images = 500 # Alter number of testing images
+        self.locations = ["fall"] # Define the datasets used in the training
+        self.location_repeat = len(self.locations) # Number of training locations that are the same
+        self.test_location = "summer" # Define the dataset is used for testing
+        self.filter = 8 # Set to number of images to filter
+        self.validation = True # Set to True to get similarity matrices (affects query time)
+        
+        assert (len(self.dataset) != 0),"Dataset not defined, see README.md for details on setting up images"
+        assert (os.path.isdir(self.trainingPath)),"Training path not set or path does not exist, edit line 60"
+        assert (os.path.isdir(self.testPath)),"Test path not set or path does not exist, edit line 61"
+        assert (os.path.isdir(self.trainingPath+self.locations[0])),"Images must be organized into folders based on locations, see README.md for details"
+        assert (os.path.isdir(self.testPath+self.test_location)),"Images must be organized into folders based on locations, see README.md for details"
         
         '''
         NETWORK SETTINGS
@@ -94,7 +102,6 @@ class snn_model():
         self.imgs = {'training':[],'testing':[]}
         self.ids = {'training':[],'testing':[]}
         self.spike_rates = {'training':[],'testing':[]}
-        self.hpsweep = False
         
         # Hyperparamters
         self.theta_max = 0.5 # maximum threshold value
@@ -107,7 +114,7 @@ class snn_model():
         
         # Test settings 
         self.test_true = False # leave default to False
-        self.validation = True # test this network against other methods, default True
+    
         
         '''
         DATA SETTINGS
@@ -149,7 +156,13 @@ class snn_model():
                                             str(self.feature_layer)+\
                                         'f'+str(self.output_layer)+\
                                             'o'+str(self.epoch)+'/'
+        
+        # create output folder
+        now = datetime.now()
+        self.output_folder = './output/'+now.strftime("%d%m%y-%H-%M-%S")
+        os.mkdir(self.output_folder)
     
+        
     # Check if pre-trained network exists, prompt if retrain or run        
     def checkTrainTest(self):
         prompt = "A network with these parameters exists, re-train network? (y/n):\n"
@@ -335,6 +348,7 @@ class snn_model():
             epochStart = timeit.default_timer()
             for t in range(self.T):
                 out_spks = torch.tensor([0],device=self.device,dtype=float)
+
                 net['set_spks'][-1] = torch.tile(out_spks,
                                                  (self.number_modules,
                                                   1,
@@ -347,7 +361,7 @@ class snn_model():
                     net['eta_ip'][2] = self.n_itp*pt
                     net['eta_stdp'][2] = self.n_init*pt
                     net['eta_stdp'][3] = -1*self.n_init*pt
-                if int(self.T/2) - 1 == t:
+                if np.mod((t+1),self.T) == 0:
                     net['step_num'] = 0     
             print('Epoch '+str(epoch+1)+' trained in: '
                   +str(round(timeit.default_timer()-epochStart,2))+'s')
@@ -407,19 +421,21 @@ class snn_model():
         print('Validating network training')
         # set input spikes for training data from one location
         net['set_spks'][0] = ut.setSpikeRates(
-            self.imgs['training'][0:self.number_training_images],
-            self.ids['training'][0:self.number_training_images],
-            self.device,
-            [self.imWidth,self.imHeight],
-            True,
-            self.number_training_images,
-            self.number_modules,
-            self.intensity,
-            self.location_repeat)
+                        self.imgs['training'][0:self.number_training_images],
+                        self.ids['training'][0:self.number_training_images],
+                        self.device,
+                        [self.imWidth,self.imHeight],
+                        True,
+                        self.number_training_images,
+                        self.number_modules,
+                        self.intensity,
+                        self.location_repeat)
         
         # correct place matches variable
         numcorrect = 0
-        outconcat = np.array([])
+        
+        if self.validation:
+            outconcat = np.array([])
         
         # run the test network on training data to evaluate network performance
         start = timeit.default_timer()
@@ -431,7 +447,9 @@ class snn_model():
                                np.reshape(net['x'][-1].cpu().numpy(),
                               [1,1,int(self.number_training_images)]))
             nidx = np.argmax(tonump)
-            outconcat = np.append(outconcat,tonump)
+            
+            if self.validation:
+                outconcat = np.append(outconcat,tonump)
             
             gt_ind = self.filteredNames.index(self.filteredNames[t])
             
@@ -443,7 +461,7 @@ class snn_model():
         
         # network must match >95% of training places to be succesfull
         p100r = (numcorrect/self.number_training_images)*100
-        testFlag = (p100r>95)
+        testFlag = (p100r>75)
         if testFlag: # network training was successfull
             
             print('')
@@ -455,9 +473,6 @@ class snn_model():
             print('P@100R: '+str(p100r)+
                   '%  |  Query frequency: '+
                   str(round(self.number_training_images/(end-start),2))+'Hz')
-            
-            print('Trained on '+self.locations[0]+'/'+self.locations[1]+
-                  '  |  Queried with '+self.locations[0])
             print('')
             
             # create output folder (if it does not already exist)
@@ -469,14 +484,15 @@ class snn_model():
                 os.mkdir(self.training_out+'images/training/')
             
             # plot the similarity matrix for network validation
-            concatReshape = np.reshape(outconcat,
-                                       (self.number_training_images,
-                                        self.number_training_images))
+            if self.validation:
+                concatReshape = np.reshape(outconcat,
+                                           (self.number_training_images,
+                                            self.number_training_images))
             
-            plot_name = "Similarity: network training validation"
-            ut.plot_similarity(concatReshape,plot_name,
-                               self.training_out+'images/training/')
-            
+                plot_name = "Similarity: network training validation"
+                ut.plot_similarity(concatReshape,plot_name,
+                                   self.training_out+'images/training/')
+                
             # Reset network details
             net['sspk_idx'] = [0,0,0]
             net['step_num'] = 0
@@ -488,25 +504,29 @@ class snn_model():
             cmap = plt.cm.magma
             
             print('Plotting weight matrices')
+            # make weights folder
+            weights_folder = self.output_folder+'/weights/'
+            os.mkdir(weights_folder)
+            
             # initial weights
             ut.plot_weights(self.init_weights[0],'Initial I->F Excitatory Weights',
-                            cmap,self.number_modules/5,0.5,self.training_out)
+                            cmap,self.number_modules,0.5,weights_folder)
             ut.plot_weights(self.init_weights[1], 'Initial I->F Inhibitory Weights',
-                            cmap,self.number_modules/5,0.1,self.training_out)
+                            cmap,self.number_modules,0.1,weights_folder)
             ut.plot_weights(self.init_weights[2], 'Initial F->O Excitatory Weights',
-                            cmap,self.number_modules,0.1,self.training_out)
+                            cmap,self.number_modules,0.01,weights_folder)
             ut.plot_weights(self.init_weights[3], 'Initial F->O Inhibitory Weights',
-                            cmap,self.number_modules,0.1,self.training_out)
+                            cmap,self.number_modules,0.01,weights_folder)
             
             # calculated weights
             ut.plot_weights(net['W'][0],'I->F Excitatory Weights',
-                            cmap,self.number_modules/5,0.5,self.training_out)
+                            cmap,self.number_modules,0.5,weights_folder)
             ut.plot_weights(net['W'][1], 'I->F Inhibitory Weights',
-                            cmap,self.number_modules/5,0.1,self.training_out)
+                            cmap,self.number_modules,0.1,weights_folder)
             ut.plot_weights(net['W'][2],'F->O Excitatory Weights',
-                            cmap,self.number_modules,0.1,self.training_out)
+                            cmap,self.number_modules,0.01,weights_folder)
             ut.plot_weights(net['W'][3], 'F->O Inhibitory Weights',
-                            cmap,self.number_modules,0.1,self.training_out)
+                            cmap,self.number_modules,0.01,weights_folder)
             
             print('Network formatting and saving...') 
             
@@ -575,7 +595,7 @@ class snn_model():
             if self.validation: # get similarity matrix for PR curve generation
                 numpconc = np.append(numpconc,tonump)
         
-        self.p100r = round((numcorrect/self.number_training_images)*100,2)
+        self.p100r = round((numcorrect/self.number_testing_images)*100,2)
         print('Number of correct matches P@100R - '+str(self.p100r)+'%')
 
         end = timeit.default_timer()
@@ -585,9 +605,13 @@ class snn_model():
         # if self.validation = True, get PR information and plot similarity matrix
         if self.validation:
             
+            # make the output folder
+            folderName = self.output_folder+'/similarity/'
+            os.mkdir(folderName)
+            
             # reshape similarity matrix
-            sim_mat = np.reshape(numpconc,(self.number_training_images,
-                                               self.number_testing_images))
+            sim_mat = np.reshape(numpconc,(self.number_testing_images,
+                                           self.number_training_images))
             
             # plot the similarity matrix
             fig = plt.figure()
@@ -596,13 +620,24 @@ class snn_model():
             fig.suptitle("Similarity matrix",fontsize = 12)
             plt.xlabel("Query",fontsize = 12)
             plt.ylabel("Databse",fontsize = 12)
+            plt.savefig(folderName+'/sim_mat.pdf')
             plt.show()
             
             # generate the ground truth matrix
-            GT = np.zeros((self.number_training_images,self.number_testing_images), dtype=int)
+            GT = np.zeros((self.number_testing_images,self.number_training_images), dtype=int)
             for n in range(len(GT)):
                 GT[n,n] = 1
-                
+            
+            # plot the GT matrix
+            fig = plt.figure()
+            plt.matshow(GT,fig,cmap='tab20c')
+            plt.colorbar(label="Spike amplitude")
+            fig.suptitle("Ground Truth",fontsize = 12)
+            plt.xlabel("Query",fontsize = 12)
+            plt.ylabel("Databse",fontsize = 12)
+            plt.savefig(folderName+'/GT.pdf')
+            plt.show()    
+            
             # get the P & R 
             P,R = createPR(sim_mat, GT, GT)
             
@@ -614,127 +649,38 @@ class snn_model():
             plt.ylabel("Precision",fontsize = 12)
             plt.show()
             
+            # calculate the recall at N
+            N_vals = [1,5,10,15,20,25]
+            recallN = ut.recallAtN(sim_mat, GT, GT, N_vals)
+            
+            print('')
+            for n, ndx in enumerate(recallN):
+                print('Recall at N='+str(N_vals[n])+': '+str(ndx))
+
+            
         # if using cuda, clear and dump the memory usage
         if self.device =='cuda':
             gc.collect()
             torch.cuda.empty_cache()
     
-    '''
-    Compare results to sum of absolute differences
-    '''        
-    def sad(self):
-        
-        print('')
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print('Setting up Sum of Absolute Differences (SAD) calculations')    
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print('')
-        
-        sadcorrect = 0
-        
-        # load the training images
-        self.location_repeat = 1 # switch to only do SAD on one dataset traversal
-        self.fullTrainPaths = self.fullTrainPaths[1]
-        self.test_true = False # testing images preloaded, load the training ones
-        # load the training images
-        self.imgs['training'], self.ids['training'] = ut.loadImages(self.test_true,
-                                            self.fullTrainPaths,
-                                            self.filteredNames,
-                                            [self.imWidth,self.imHeight],
-                                            self.num_patches,
-                                            self.testPath,
-                                            self.test_location)
-        # create database tensor
-        for ndx, n in enumerate(self.imgs['training']):
-            if ndx == 0:
-                db = torch.unsqueeze(n,0)
-            else:
-                db = torch.concat((db,torch.unsqueeze(n,0)),0)
-        
-        def calc_sad(query, database, const):
-            
-            SAD = torch.sum(torch.abs((database * const) -  (query * const)),
-                           (1,2),keepdim=True)
-            for n in range(2):
-                SAD = torch.squeeze(SAD,-1)
-            return SAD
-        
-        # calculate SAD for each image to database and count correct number
-        imgred = 1/(self.imWidth*self.imHeight)
-        sad_concat = np.array([])
-        print('Running SAD')
-        start = timeit.default_timer()
-        for n, q in enumerate(self.imgs['testing']):
-            results = []
-            pixels = torch.empty([])
-            # create 3D tensor of query images
-            for o in range(self.number_testing_images):
-                if o == 0:
-                    pixels = torch.unsqueeze(q,0)
-                else:
-                    pixels = torch.concat((pixels,torch.unsqueeze(q,0)),0)
-                
-            sad_score = calc_sad(pixels, db, imgred)
-            
-            best_match = np.argmin(sad_score.cpu().numpy())
-            if n == best_match:
-                sadcorrect += 1
-                
-            if self.validation:
-                sad_concat = np.append(sad_concat,sad_score.cpu().numpy())
-                
-        end = timeit.default_timer()   
-        p100r = round((sadcorrect/self.number_testing_images)*100,2)
-        print('')
-        print('Sum of absolute differences P@1: '+
-              str(p100r)+'%')
-        print('Sum of absolute differences queried at '
-              +str(round(self.number_testing_images/(end-start),2))+'Hz')
-        
-        print('Network to sum of absolute differences ratio '+
-              str(round(self.p100r/p100r,2)))
 
-        if self.validation:
-            # reshape similarity matrix
-            sim_mat = np.reshape(sad_concat,(self.number_training_images,
-                                               self.number_testing_images))
-            
-            # plot the similarity matrix
-            fig = plt.figure()
-            plt.matshow(sim_mat,fig,cmap='Greys')
-            plt.colorbar(label="Sum of absolute differences")
-            fig.suptitle("Similarity matrix - SAD",fontsize = 12)
-            plt.xlabel("Query",fontsize = 12)
-            plt.ylabel("Databse",fontsize = 12)
-            plt.show()
-            
-            # generate the ground truth matrix
-            GT = np.zeros((self.number_training_images,self.number_testing_images), dtype=int)
-            for n in range(len(GT)):
-                GT[n,n] = 1
-                
-            # get the P & R 
-            P,R = createPR(sim_mat, GT, GT)
-            
-            # make the PR curve
-            fig = plt.figure()
-            plt.plot(R,P)
-            fig.suptitle("SAD Precision Recall curve",fontsize = 12)
-            plt.xlabel("Recall",fontsize = 12)
-            plt.ylabel("Precision",fontsize = 12)
-            plt.show()
-            pause=1
 '''
 Run the network
 '''        
 if __name__ == "__main__":
-    model = snn_model() # Instantiate model
+    
+    # Instantiate model
+    model = snn_model()
+    
+    # check if the network has already been trained previously
     flg = model.checkTrainTest()
-    # Create dictionary of images
+    
+    # if user inputs 'y' to retrain network if network doesn't exist
     if flg == 'y':
-        model.initialize('training')
+        model.initialize('training') # Initializes the training network
         model.train() # Run network training (will check if already trained)
-        #model.validate()
-    model.initialize('testing')
+        model.validate() # Validates that the network trained properly
+    
+    # Tests the network
+    model.initialize('testing') # Initializes the testing network
     model.networktester() # Test the network
-    model.sad() # compare results to sum of absolute differences
