@@ -47,12 +47,12 @@ If CUDA was not installed correctly, the output will be:
 #### CPU only
 To install using the CPU only, simply install Python + dependencies.
 ```console
-conda create -n vprtempo python pytorch torchvision torchaudio cpuonly opencv matplotlib halo -c pytorch
+conda create -n vprtempo python pytorch torchvision torchaudio cpuonly opencv matplotlib -c pytorch
 ```
 ### MacOS
 CUDA acceleration is not available on MacOS and the network will only use the CPU, so simply just need to install Python + dependencies.
 ```console
-conda create -n vprtempo -c conda-forge python opencv matplotlib halo -c pytorch pytorch::pytorch torchvision torchaudio
+conda create -n vprtempo -c conda-forge python opencv matplotlib -c pytorch pytorch::pytorch torchvision torchaudio
 ```
 
 ### Get the repository
@@ -66,13 +66,38 @@ cd ~/VPRTempo
 ## Datasets
 VPRTempo was developed and tested using the [Nordland](https://webdiis.unizar.es/~jmfacil/pr-nordland/#download-dataset) dataset, an approximately 729km traverse of the Nordland Railway in Norway recorded over the 4 seasons - Spring, Fall, Summer, & Winter. This software will work for either the full-resolution or down-sampled datasets, however our paper details the full-resolution datasets. 
 
+In general, data should be organised in the following way in order to train the network on multiple traversals of the same location.
+
+```
+--Dataset
+  |--Training
+  |  |--Traversal_1
+  |  |--Traversal_2
+  |  |-- ...
+  |  |--Traversal_n
+  |
+  |--Testing
+  |  |--Test_traversal
+```
+Speicfy the datapaths by altering `self.trainingPath` and `self.testPath` in lines 60 and 61 of `VPRTempo.py`. You can specify which traversals you want to train and test on by also altering `self.locations` and `self.test_location` in lines 66 and 67. In the case above it would be the following; 
+
+```python
+60 self.trainingPath = '<path_to_data>/Training/
+61 self.testPath = '<path_to_data>/Testing/
+
+66 self.locations = ["Traversal_1,Traversal_2"]
+67 self.test_location = "Test_traversal"
+```
+
+Image names for the same locations across traversals (training and testing) must be the same as they are imported based on a `.txt` file. We provide an easy tool in `./src/generate_names.py` that will go through and make sure all the names are the same and generate a `.txt` file of image names and store it in the main folder.
+
 ## Usage
 Both the training and testing is handled by the `VPRTempo.py` script. Initial installs do not contain any pre-defined networks and will need to be trained prior to use. There are only two pre-requisites for running the network.
 ### Pre-requisites
 * The Nordland dataset is downloaded wih the Spring and Fall images from sections 1 & 2 placed into a their own folders (training data), and the Summer images similarly placed in another separate folder (testing data).
 * Edit lines 61 & 62 of `VPRTempo.py` to your local training and testing folders
 
-Once these two things have been setup, run `VPRTempo.py` to train and test your first network with the default settings.
+Once these two things have been setup, run `VPRTempo.py` to train and test your first network with the default settings. 
 
 ## Training and testing benchmarks
 System benchmarks are based off the following network settings:
