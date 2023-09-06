@@ -94,7 +94,7 @@ def loadImages(test_true,train_paths,img_names,dims,patches,testPath,testLoc):
     
     imgs = []
     ids = []
-    
+
     if test_true:
         train_paths = [testPath+testLoc+'/']
     
@@ -104,6 +104,7 @@ def loadImages(test_true,train_paths,img_names,dims,patches,testPath,testLoc):
                 fullpath = paths+m
                 # read and convert image from BGR to RGB 
                 img = cv2.imread(fullpath)[:,:,::-1]
+
                 # convert image
                 img = cv2.cvtColor(img,cv2.COLOR_RGB2GRAY)
                 imgProc = processImage(img,dims,patches)
