@@ -57,16 +57,15 @@ class snn_model():
         USER SETTINGS
         '''
         self.dataset = 'nordland' # set which dataset to run network on
-        self.trainingPath = '/home/adam/data/nordland/training/' # training datapath
-        self.testPath = '/home/adam/data/nordland/testing/'  # testing datapath
+        self.trainingPath = '/home/adam/data/nordland/' # training datapath
+        self.testPath = '/home/adam/data/nordland/'  # testing datapath
         self.number_modules = 1 # number of module networks
-        self.number_training_images = 500 # Alter number of training images
-        self.number_testing_images = 500 # Alter number of testing images
-        self.locations = ["fall"] # Define the datasets used in the training
-        self.location_repeat = len(self.locations) # Number of training locations that are the same
+        self.number_training_images = 100 # Alter number of training images
+        self.number_testing_images = 100 # Alter number of testing images
+        self.locations = ["fall","spring"] # Define the datasets used in the training
         self.test_location = "summer" # Define the dataset is used for testing
         self.filter = 8 # Set to number of images to filter
-        self.validation = True # Set to True to get similarity matrices (affects query time)
+        self.validation = True # Set to True to calculate PR metrics
         
         assert (len(self.dataset) != 0),"Dataset not defined, see README.md for details on setting up images"
         assert (os.path.isdir(self.trainingPath)),"Training path not set or path does not exist, edit line 60"
@@ -82,6 +81,7 @@ class snn_model():
         self.imHeight = 28 # image height for patch norm
         self.num_patches = 7 # number of patches
         self.intensity = 255 # divide pixel values to get spikes in range [0,1]
+        self.location_repeat = len(self.locations) # Number of training locations that are the same
         
         # Network and training settings
         self.input_layer = (self.imWidth*self.imHeight) # number of input layer neurons
@@ -127,9 +127,9 @@ class snn_model():
         self.filteredNames = []
         for n in range(0,len(self.imageNames),self.filter):
             self.filteredNames.append(self.imageNames[n])
-        #random.shuffle(self.filteredNames)
-        del self.filteredNames[self.number_training_images:len(self.filteredNames)]
         
+        del self.filteredNames[self.number_training_images:len(self.filteredNames)]
+
         # Get the full training and testing data paths    
         self.fullTrainPaths = []
         for n in self.locations:
@@ -205,7 +205,7 @@ class snn_model():
                                             self.test_location)
         
         self.spike_rates[condition] = ut.setSpikeRates(self.imgs[condition],
-                                            self.ids[condition],
+                                           self.ids[condition],
                                             self.device,
                                             [self.imWidth,self.imHeight],
                                             self.test_true,
@@ -361,7 +361,7 @@ class snn_model():
                     net['eta_ip'][2] = self.n_itp*pt
                     net['eta_stdp'][2] = self.n_init*pt
                     net['eta_stdp'][3] = -1*self.n_init*pt
-                if np.mod((t+1),self.T) == 0:
+                if np.mod((t+1),(int(self.T/self.location_repeat))) == 0:
                     net['step_num'] = 0     
             print('Epoch '+str(epoch+1)+' trained in: '
                   +str(round(timeit.default_timer()-epochStart,2))+'s')
@@ -435,7 +435,7 @@ class snn_model():
         numcorrect = 0
         
         if self.validation:
-            outconcat = np.array([])
+            outconcat = []
         
         # run the test network on training data to evaluate network performance
         start = timeit.default_timer()
@@ -449,7 +449,7 @@ class snn_model():
             nidx = np.argmax(tonump)
             
             if self.validation:
-                outconcat = np.append(outconcat,tonump)
+                outconcat.append(tonump.tolist())
             
             gt_ind = self.filteredNames.index(self.filteredNames[t])
             
@@ -485,6 +485,7 @@ class snn_model():
             
             # plot the similarity matrix for network validation
             if self.validation:
+                outconcat = np.array(outconcat)
                 concatReshape = np.reshape(outconcat,
                                            (self.number_training_images,
                                             self.number_training_images))
@@ -576,9 +577,8 @@ class snn_model():
         
         # set number of correct places to 0
         numcorrect = 0
-
         net['spike_dims'] = self.input_layer
-        numpconc = np.array([])
+        numpconc = []
         start = timeit.default_timer()
         for t in range(self.number_testing_images):
             tonump = np.array([])
@@ -593,7 +593,7 @@ class snn_model():
                numcorrect += 1
             
             if self.validation: # get similarity matrix for PR curve generation
-                numpconc = np.append(numpconc,tonump)
+               numpconc.append(tonump.tolist())
         
         self.p100r = round((numcorrect/self.number_testing_images)*100,2)
         print('Number of correct matches P@100R - '+str(self.p100r)+'%')
@@ -604,6 +604,8 @@ class snn_model():
         
         # if self.validation = True, get PR information and plot similarity matrix
         if self.validation:
+            
+            numpconc = np.array(numpconc)
             
             # make the output folder
             folderName = self.output_folder+'/similarity/'
@@ -655,7 +657,7 @@ class snn_model():
             
             print('')
             for n, ndx in enumerate(recallN):
-                print('Recall at N='+str(N_vals[n])+': '+str(ndx))
+                print('Recall at N='+str(N_vals[n])+': '+str(round(ndx,2)))
 
             
         # if using cuda, clear and dump the memory usage
@@ -663,7 +665,129 @@ class snn_model():
             gc.collect()
             torch.cuda.empty_cache()
     
+    def sad(self):
+        
+        print('')
+        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+        print('Setting up Sum of Absolute Differences (SAD) calculations')    
+        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+        print('')
+        
+        sadcorrect = 0
+        
+        # load the training images
+        self.location_repeat = 1 # switch to only do SAD on one dataset traversal
+        self.fullTrainPaths = self.fullTrainPaths[1]
+        self.test_true = False # testing images preloaded, load the training ones
+        # load the training images
+        self.imgs['training'], self.ids['training'] = ut.loadImages(self.test_true,
+                                            self.fullTrainPaths,
+                                            self.filteredNames,
+                                            [self.imWidth,self.imHeight],
+                                            self.num_patches,
+                                            self.testPath,
+                                            self.test_location)
+        
+        # port images to cpu
+        #for n, ndx in enumerate(self.imgs['training']):
+           # self.imgs['training'][n] = ndx.cpu()
+        #for n, ndx in enumerate(self.imgs['testing']):
+            #self.imgs['testing'][n] = ndx.cpu()
+        
+        # create database tensor
+        for ndx, n in enumerate(self.imgs['training']):
+            if ndx == 0:
+                db = torch.unsqueeze(n,0)
+            else:
+                db = torch.concat((db,torch.unsqueeze(n,0)),0)
+        
+        def calc_sad(query, database, const):
+            
+            SAD = torch.sum(torch.abs((database * const) -  (query * const)),
+                           (1,2),keepdim=True)
+            for n in range(2):
+                SAD = torch.squeeze(SAD,-1)
+            return SAD
+        
+        # calculate SAD for each image to database and count correct number
+        imgred = 1/(self.imWidth*self.imHeight)
+        sad_concat = []
+        print('Running SAD')
+        correctidx = []
+        incorrectidx = []
+        start = timeit.default_timer()
+        for n, q in enumerate(self.imgs['testing']):
+            results = []
+            pixels = torch.empty([])
 
+            # create 3D tensor of query images
+            for o in range(self.number_testing_images):
+                if o == 0:
+                    pixels = torch.unsqueeze(q,0)
+                else:
+                    pixels = torch.concat((pixels,torch.unsqueeze(q,0)),0)
+                
+            sad_score = calc_sad(pixels, db, imgred)
+            
+            best_match = np.argmin(sad_score.cpu().numpy())
+            if n == best_match:
+                sadcorrect += 1
+                correctidx.append(n)
+            else:
+                incorrectidx.append(n)
+            if self.validation:
+                sad_concat.append(sad_score.cpu().numpy())
+                
+        end = timeit.default_timer()   
+        p100r = round((sadcorrect/self.number_testing_images)*100,2)
+        print('')
+        print('Sum of absolute differences P@1: '+
+              str(p100r)+'%')
+        print('Sum of absolute differences queried at '
+              +str(round(self.number_testing_images/(end-start),2))+'Hz')
+        
+        print('Network to sum of absolute differences ratio '+
+              str(round(self.p100r/p100r,2)))
+    
+        if self.validation:
+            # reshape similarity matrix
+            sad_concat = np.array(sad_concat)
+            sim_mat = np.reshape(sad_concat,(self.number_training_images,
+                                               self.number_testing_images))
+            
+            # plot the similarity matrix
+            fig = plt.figure()
+            plt.matshow(sim_mat,fig,cmap='Greys')
+            plt.colorbar(label="Sum of absolute differences")
+            fig.suptitle("Similarity matrix - SAD",fontsize = 12)
+            plt.xlabel("Query",fontsize = 12)
+            plt.ylabel("Databse",fontsize = 12)
+            plt.show()
+            
+            # generate the ground truth matrix
+            GT = np.zeros((self.number_training_images,self.number_testing_images), dtype=int)
+            for n in range(len(GT)):
+                GT[n,n] = 1
+                
+            # get the P & R 
+            sim_invert = 1/sim_mat # invert matrix so lowest SAD is highest value
+            P,R = createPR(sim_invert, GT, GT)
+            
+            # make the PR curve
+            fig = plt.figure()
+            plt.plot(R,P)
+            fig.suptitle("SAD Precision Recall curve",fontsize = 12)
+            plt.xlabel("Recall",fontsize = 12)
+            plt.ylabel("Precision",fontsize = 12)
+            plt.show()
+            
+            # calculate the recall at N
+            N_vals = [1,5,10,15,20,25]
+            recallN = ut.recallAtN(sim_invert, GT, GT, N_vals)
+            
+            print('')
+            for n, ndx in enumerate(recallN):
+                print('Recall at N='+str(N_vals[n])+': '+str(round(ndx,2)))
 '''
 Run the network
 '''        
@@ -684,3 +808,15 @@ if __name__ == "__main__":
     # Tests the network
     model.initialize('testing') # Initializes the testing network
     model.networktester() # Test the network
+    model.sad()
+
+
+    #for n in range(1):
+     #   model = snn_model()
+      #  model.initialize('training')
+       # model.train()
+        #model.initialize('testing')
+        #model.networktester()
+        #model.sad()
+        #gc.collect()
+        #torch.cuda.empty_cache()
