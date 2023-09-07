@@ -1,3 +1,4 @@
+# %%
 #MIT License
 
 #Copyright (c) 2023 Adam Hines, Peter G Stratton, Michael Milford, Tobias Fischer
@@ -29,7 +30,9 @@ import os
 import torch
 import gc
 import timeit
+import math
 import shutil
+import logging
 import sys
 sys.path.append('./src')
 sys.path.append('./weights')
@@ -60,11 +63,11 @@ class snn_model():
         self.trainingPath = '/home/adam/data/nordland/' # training datapath
         self.testPath = '/home/adam/data/nordland/'  # testing datapath
         self.number_modules = 1 # number of module networks
-        self.number_training_images = 100 # Alter number of training images
-        self.number_testing_images = 100 # Alter number of testing images
+        self.number_training_images = 1000 # Alter number of training images
+        self.number_testing_images = 1000 # Alter number of testing images
         self.locations = ["fall","spring"] # Define the datasets used in the training
         self.test_location = "summer" # Define the dataset is used for testing
-        self.filter = 8 # Set to number of images to filter
+        self.filter = 1 # Set to number of images to filter
         self.validation = True # Set to True to calculate PR metrics
         
         assert (len(self.dataset) != 0),"Dataset not defined, see README.md for details on setting up images"
@@ -77,8 +80,8 @@ class snn_model():
         NETWORK SETTINGS
         '''
         # Image and patch normalization settings
-        self.imWidth = 28 # image width for patch norm
-        self.imHeight = 28 # image height for patch norm
+        self.imWidth = 28 # image width for resize
+        self.imHeight = 28 # image height for resize
         self.num_patches = 7 # number of patches
         self.intensity = 255 # divide pixel values to get spikes in range [0,1]
         self.location_repeat = len(self.locations) # Number of training locations that are the same
@@ -135,38 +138,56 @@ class snn_model():
         for n in self.locations:
                 self.fullTrainPaths.append(self.trainingPath+n+'/')
         
+        # create output folder
+        now = datetime.now()
+        self.output_folder = './output/'+now.strftime("%d%m%y-%H-%M-%S")
+        os.mkdir(self.output_folder)
+        
+        # setup logger
+        self.logger = logging.getLogger("VPRTempo")
+        self.logger.setLevel(logging.DEBUG)
+        logging.basicConfig(filename=self.output_folder+"/logfile.log", 
+                            filemode="a+",
+                            format="%(asctime)-15s %(levelname)-8s %(message)s")
+        self.logger.addHandler(logging.StreamHandler())
+        
         # Print network details
-        print('////////////')
-        print('VPRTempo - Temporally Encoded Visual Place Recognition v1.1.0-alpha')
-        print('Queensland University of Technology, Centre for Robotics')
-        print('')
-        print('© 2023 Adam D Hines, Peter G Stratton, Michael Milford, Tobias Fischer')
-        print('MIT license - https://github.com/QVPR/VPRTempo')
-        print('\\\\\\\\\\\\\\\\\\\\\\\\')
-        print('')
-        print('CUDA available: '+str(torch.cuda.is_available()))
+        self.logger.info('////////////')
+        self.logger.info('VPRTempo - Temporally Encoded Visual Place Recognition v1.1.0-alpha')
+        self.logger.info('Queensland University of Technology, Centre for Robotics')
+        self.logger.info('')
+        self.logger.info('© 2023 Adam D Hines, Peter G Stratton, Michael Milford, Tobias Fischer')
+        self.logger.info('MIT license - https://github.com/QVPR/VPRTempo')
+        self.logger.info('\\\\\\\\\\\\\\\\\\\\\\\\')
+        self.logger.info('')
+        self.logger.info('CUDA available: '+str(torch.cuda.is_available()))
         if torch.cuda.is_available() == True:
             current_device = torch.cuda.current_device()
-            print('Current device is: '+str(torch.cuda.get_device_name(current_device)))
+            self.logger.info('Current device is: '+str(torch.cuda.get_device_name(current_device)))
         else:
-            print('Current device is: CPU')
- 
+            self.logger.info('Current device is: CPU')
+        self.logger.info('')
+        self.logger.info("~~ Hyperparameters ~~")
+        self.logger.info('')
+        self.logger.info('Firing threshold max: '+str(self.theta_max))
+        self.logger.info('Initial STDP learning rate: '+str(self.n_init))
+        self.logger.info('Intrinsic threshold plasticity learning rate: '+str(self.n_itp))
+        self.logger.info('Firing rate range: ['+str(self.f_rate[0])+', '+str(self.f_rate[1])+']')
+        self.logger.info('Excitatory connection probability: '+str(self.p_exc))
+        self.logger.info('Inhibitory connection probability: '+str(self.p_inh))
+        self.logger.info('Constant input: '+str(self.c))
+
         # Network weights name
         self.training_out = './weights/'+str(self.input_layer)+'i'+\
                                             str(self.feature_layer)+\
                                         'f'+str(self.output_layer)+\
                                             'o'+str(self.epoch)+'/'
         
-        # create output folder
-        now = datetime.now()
-        self.output_folder = './output/'+now.strftime("%d%m%y-%H-%M-%S")
-        os.mkdir(self.output_folder)
-    
         
     # Check if pre-trained network exists, prompt if retrain or run        
     def checkTrainTest(self):
         prompt = "A network with these parameters exists, re-train network? (y/n):\n"
-        print('')
+        self.logger.info('')
         if path.isdir(self.training_out):
             retrain = input(prompt)
         else:
@@ -178,16 +199,15 @@ class snn_model():
         '''
         Network startup and initialization
         '''
-        print('')
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print(condition+' startup and initialization')    
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print('')
-        print('Loading '+condition+' images')
+        self.logger.info('')
+        self.logger.info('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+        self.logger.info(condition+' startup and initialization')    
+        self.logger.info('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+        self.logger.info('')
+        self.logger.info('Loading '+condition+' images')
         
         if condition == 'testing':
             self.test_true = True
-            #random.shuffle(self.filteredNames)
             del self.filteredNames[self.number_testing_images:len(self.filteredNames)]
             self.epoch = 1 # Only run the network once
             self.location_repeat = 1 # One location repeat for testing
@@ -232,7 +252,7 @@ class snn_model():
         Network startup and initialization
         '''
         
-        print('Creating network and setting weights')
+        self.logger.info('Creating network and setting weights')
         # create a new blitnet netowrk
         net = bn.newNet(self.number_modules,self.imWidth*self.imHeight)
         
@@ -264,13 +284,13 @@ class snn_model():
         '''
         Feature layer training
         '''
-        print('')
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print('Training the input to feature layer')    
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print('')
+        self.logger.info('')
+        self.logger.info('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+        self.logger.info('Training the input to feature layer')    
+        self.logger.info('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+        self.logger.info('')
         
-        print('Setting spike rates from loaded images')
+        self.logger.info('Setting spike rates from loaded images')
         
         # begin timer for network training
         start = timeit.default_timer()
@@ -291,11 +311,11 @@ class snn_model():
                     net['eta_ip'][1] = self.n_itp*pt
                     net['eta_stdp'][0] = self.n_init*pt
                     net['eta_stdp'][1] = -1*self.n_init*pt
-            print('Epoch '+str(epoch+1)+' trained in: '
+            self.logger.info('Epoch '+str(epoch+1)+' trained in: '
                   +str(round(timeit.default_timer()-epochStart,2))+'s')
-            print('')
+            self.logger.info('')
             
-        print('Finished training input to feature layer')
+        self.logger.info('Finished training input to feature layer')
         
         # delete the training images
         
@@ -308,7 +328,7 @@ class snn_model():
         if self.p_exc > 0.0: net['eta_stdp'][0] = 0.0
         if self.p_inh > 0.0: net['eta_stdp'][1] = 0.0
         
-        print('Getting feature layer spikes for output layer training')
+        self.logger.info('Getting feature layer spikes for output layer training')
         # get the feature spikes for training the output layer
         net['x_feat'] = []
         net['step_num'] = 0
@@ -316,7 +336,7 @@ class snn_model():
             bn.runSim(net,1,self.device,layers)
             net['x_feat'].append(net['x'][1]) # dictionary output of feature spikes
             
-        print('Creating output layer')    
+        self.logger.info('Creating output layer')    
         # Create and train the output layer with the feature layer
         bn.addLayer(net,[self.number_modules,1,self.output_layer],
                     0.0,0.0,0.0,0.0,0.0,False)
@@ -332,11 +352,11 @@ class snn_model():
         '''
         Output layer training
         '''
-        print('')
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print('Training the feature to output layer')    
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print('')
+        self.logger.info('')
+        self.logger.info('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+        self.logger.info('Training the feature to output layer')    
+        self.logger.info('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+        self.logger.info('')
         
         net['spike_dims'] = 1 # change spike dims for output spike indexing
         net['set_spks'][0] = [] # remove input spikes
@@ -363,17 +383,17 @@ class snn_model():
                     net['eta_stdp'][3] = -1*self.n_init*pt
                 if np.mod((t+1),(int(self.T/self.location_repeat))) == 0:
                     net['step_num'] = 0     
-            print('Epoch '+str(epoch+1)+' trained in: '
+            self.logger.info('Epoch '+str(epoch+1)+' trained in: '
                   +str(round(timeit.default_timer()-epochStart,2))+'s')
-            print('')
+            self.logger.info('')
             
-        print('Finished training feature to output layer')
-        print('')
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print('Network trained in '+str(round(timeit.default_timer()-start,2))
+        self.logger.info('Finished training feature to output layer')
+        self.logger.info('')
+        self.logger.info('~~~~~~~~~~~~~~~~~~~~~~~~~~')
+        self.logger.info('Network trained in '+str(round(timeit.default_timer()-start,2))
                                               +'s')
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print('')
+        self.logger.info('~~~~~~~~~~~~~~~~~~~~~~~~~~')
+        self.logger.info('')
         
         # Turn off learning
         net['eta_ip'][2] = 0.0
@@ -391,7 +411,7 @@ class snn_model():
         net['x_feat'] = []
         
             
-        print('Network formatting and saving...') 
+        self.logger.info('Network formatting and saving...') 
         
         # Output the trained network
         outputPkl = self.training_out + 'net.pkl'
@@ -403,7 +423,7 @@ class snn_model():
         with open(outputPkl, 'wb') as f:
             pickle.dump(self.filteredNames, f)
         
-        print('Network succesfully saved!')
+        self.logger.info('Network succesfully saved!')
         
         # if using cuda, clear and dump the memory usage
         if self.device =='cuda':
@@ -414,11 +434,11 @@ class snn_model():
     def validate(self): 
         
         # unpickle the network
-        print('Unpickling the network')
+        self.logger.info('Unpickling the network')
         with open(self.training_out+'net.pkl', 'rb') as f:
              net = pickle.load(f)
         
-        print('Validating network training')
+        self.logger.info('Validating network training')
         # set input spikes for training data from one location
         net['set_spks'][0] = ut.setSpikeRates(
                         self.imgs['training'][0:self.number_training_images],
@@ -464,16 +484,16 @@ class snn_model():
         testFlag = (p100r>75)
         if testFlag: # network training was successfull
             
-            print('')
-            print('Network training successful!')
-            print('')
+            self.logger.info('')
+            self.logger.info('Network training successful!')
+            self.logger.info('')
             
-            print('Perfomance details:')
-            print("-------------------------------------------")
-            print('P@100R: '+str(p100r)+
+            self.logger.info('Perfomance details:')
+            self.logger.info("-------------------------------------------")
+            self.logger.info('P@100R: '+str(p100r)+
                   '%  |  Query frequency: '+
                   str(round(self.number_training_images/(end-start),2))+'Hz')
-            print('')
+            self.logger.info('')
             
             # create output folder (if it does not already exist)
             if not os.path.isdir(self.training_out):
@@ -489,10 +509,12 @@ class snn_model():
                 concatReshape = np.reshape(outconcat,
                                            (self.number_training_images,
                                             self.number_training_images))
-            
+                folderName = self.output_folder+'/similarity/'
+                os.mkdir(folderName)
                 plot_name = "Similarity: network training validation"
                 ut.plot_similarity(concatReshape,plot_name,
-                                   self.training_out+'images/training/')
+                                   folderName,
+                                   plt.cm.gist_yarg)
                 
             # Reset network details
             net['sspk_idx'] = [0,0,0]
@@ -503,33 +525,56 @@ class snn_model():
             
            # plot the weight matrices
             cmap = plt.cm.magma
+            cmap_reverse = plt.colormaps.get_cmap('magma_r')
             
-            print('Plotting weight matrices')
+            self.logger.info('Plotting weight matrices')
             # make weights folder
             weights_folder = self.output_folder+'/weights/'
             os.mkdir(weights_folder)
             
+            # get the maximum weight value for each set
+            IF_Exc = torch.max(net['W'][0]).cpu().numpy()
+            IF_Inh = torch.min(net['W'][1]).cpu().numpy()
+            FO_Exc = torch.max(net['W'][2]).cpu().numpy()
+            FO_Inh = torch.min(net['W'][3]).cpu().numpy()
+            
+            # find highest divisors of weight matrices for plotting
+            def closestDivisors(n):
+                factor1 = round(math.sqrt(n))
+                while n%factor1 > 0: factor1 -= 1
+                return factor1, n//factor1
+            
+            factor1IF, factor2IF = closestDivisors(len(net['W'][0][0][0])*len(net['W'][0][0])*self.number_modules)
+            factor1FO, factor2FO = closestDivisors(len(net['W'][2][0][0])*len(net['W'][2][0])*self.number_modules)
+            
             # initial weights
             ut.plot_weights(self.init_weights[0],'Initial I->F Excitatory Weights',
-                            cmap,self.number_modules,0.5,weights_folder)
+                            cmap,self.number_modules,IF_Exc,weights_folder,
+                            [factor1IF,factor2IF,int((factor1IF*factor2IF)/self.number_modules)])
             ut.plot_weights(self.init_weights[1], 'Initial I->F Inhibitory Weights',
-                            cmap,self.number_modules,0.1,weights_folder)
+                            cmap_reverse,self.number_modules,IF_Inh,weights_folder,
+                            [factor1IF,factor2IF,int((factor1IF*factor2IF)/self.number_modules)])
             ut.plot_weights(self.init_weights[2], 'Initial F->O Excitatory Weights',
-                            cmap,self.number_modules,0.01,weights_folder)
+                            cmap,self.number_modules,FO_Exc,weights_folder,
+                            [factor1FO,factor2FO,int((factor1FO*factor2FO)/self.number_modules)])
             ut.plot_weights(self.init_weights[3], 'Initial F->O Inhibitory Weights',
-                            cmap,self.number_modules,0.01,weights_folder)
+                            cmap_reverse,self.number_modules,FO_Inh,weights_folder,
+                            [factor1FO,factor2FO,int((factor1FO*factor2FO)/self.number_modules)])
             
             # calculated weights
             ut.plot_weights(net['W'][0],'I->F Excitatory Weights',
-                            cmap,self.number_modules,0.5,weights_folder)
+                            cmap,self.number_modules,IF_Exc,weights_folder,
+                            [factor1IF,factor2IF,int((factor1IF*factor2IF)/self.number_modules)])
             ut.plot_weights(net['W'][1], 'I->F Inhibitory Weights',
-                            cmap,self.number_modules,0.1,weights_folder)
+                            cmap_reverse,self.number_modules,IF_Inh,weights_folder,
+                            [factor1IF,factor2IF,int((factor1IF*factor2IF)/self.number_modules)])
             ut.plot_weights(net['W'][2],'F->O Excitatory Weights',
-                            cmap,self.number_modules,0.01,weights_folder)
+                            cmap,self.number_modules,FO_Exc,weights_folder,
+                            [factor1FO,factor2FO,int((factor1FO*factor2FO)/self.number_modules)])
             ut.plot_weights(net['W'][3], 'F->O Inhibitory Weights',
-                            cmap,self.number_modules,0.01,weights_folder)
-            
-            print('Network formatting and saving...') 
+                            cmap_reverse,self.number_modules,FO_Inh,weights_folder,
+                            [factor1FO,factor2FO,int((factor1FO*factor2FO)/self.number_modules)])
+            self.logger.info('Network formatting and saving...') 
             
             # Output the trained network
             outputPkl = self.training_out + 'net.pkl'
@@ -541,7 +586,7 @@ class snn_model():
             with open(outputPkl, 'wb') as f:
                 pickle.dump(self.filteredNames, f)
             
-            print('Network succesfully saved!')
+            self.logger.info('Network succesfully saved!')
         if self.device =='cuda':
             gc.collect()
             torch.cuda.empty_cache()
@@ -556,11 +601,11 @@ class snn_model():
         '''
 
         # unpickle the network
-        print('Unpickling the network')
+        self.logger.info('Unpickling the network')
         with open(self.training_out+'net.pkl', 'rb') as f:
              net = pickle.load(f)
         
-        print('Setting spike rates from loaded images')
+        self.logger.info('Setting spike rates from loaded images')
         # calculate input spikes from training images
         
         net['set_spks'][0] = self.spike_rates['testing']
@@ -569,11 +614,11 @@ class snn_model():
         with open(self.training_out+'GT_imgnames.pkl', 'rb') as f:
              GT_imgnames = pickle.load(f)
         
-        print('')
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print('Running test network')    
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print('')
+        self.logger.info('')
+        self.logger.info('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+        self.logger.info('Running test network')    
+        self.logger.info('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+        self.logger.info('')
         
         # set number of correct places to 0
         numcorrect = 0
@@ -584,6 +629,7 @@ class snn_model():
             tonump = np.array([])
             bn.testSim(net,device=self.device)
             # output the index of highest amplitude spike
+            
             tonump = np.append(tonump,np.reshape(net['x'][-1].cpu().numpy(),
                                        [1,1,int(self.number_training_images)]))
             gt_ind = GT_imgnames.index(self.filteredNames[t])
@@ -596,11 +642,11 @@ class snn_model():
                numpconc.append(tonump.tolist())
         
         self.p100r = round((numcorrect/self.number_testing_images)*100,2)
-        print('Number of correct matches P@100R - '+str(self.p100r)+'%')
+        self.logger.info('Number of correct matches P@100R - '+str(self.p100r)+'%')
 
         end = timeit.default_timer()
         queryHertz = self.number_testing_images/(end-start)
-        print('System queried at '+str(round(queryHertz,2))+'Hz')
+        self.logger.info('System queried at '+str(round(queryHertz,2))+'Hz')
         
         # if self.validation = True, get PR information and plot similarity matrix
         if self.validation:
@@ -609,21 +655,18 @@ class snn_model():
             
             # make the output folder
             folderName = self.output_folder+'/similarity/'
-            os.mkdir(folderName)
+            if not os.path.isdir(folderName):
+                os.mkdir(folderName)
             
             # reshape similarity matrix
             sim_mat = np.reshape(numpconc,(self.number_testing_images,
                                            self.number_training_images))
             
             # plot the similarity matrix
-            fig = plt.figure()
-            plt.matshow(sim_mat,fig,cmap='tab20c')
-            plt.colorbar(label="Spike amplitude")
-            fig.suptitle("Similarity matrix",fontsize = 12)
-            plt.xlabel("Query",fontsize = 12)
-            plt.ylabel("Databse",fontsize = 12)
-            plt.savefig(folderName+'/sim_mat.pdf')
-            plt.show()
+            plot_name = "Similarity: Result"
+            ut.plot_similarity(sim_mat,plot_name,
+                                folderName,
+                                plt.cm.tab20c)
             
             # generate the ground truth matrix
             GT = np.zeros((self.number_testing_images,self.number_training_images), dtype=int)
@@ -631,18 +674,16 @@ class snn_model():
                 GT[n,n] = 1
             
             # plot the GT matrix
-            fig = plt.figure()
-            plt.matshow(GT,fig,cmap='tab20c')
-            plt.colorbar(label="Spike amplitude")
-            fig.suptitle("Ground Truth",fontsize = 12)
-            plt.xlabel("Query",fontsize = 12)
-            plt.ylabel("Databse",fontsize = 12)
-            plt.savefig(folderName+'/GT.pdf')
-            plt.show()    
+            plot_name = "GT"
+            ut.plot_similarity(GT,plot_name,
+                                folderName,
+                                plt.cm.tab20c)   
             
             # get the P & R 
             P,R = createPR(sim_mat, GT, GT)
-            
+            self.logger.info('Precision values: '+str(P))
+            self.logger.info('Recall values: '+str(R))
+
             # make the PR curve
             fig = plt.figure()
             plt.plot(R,P)
@@ -655,144 +696,21 @@ class snn_model():
             N_vals = [1,5,10,15,20,25]
             recallN = ut.recallAtN(sim_mat, GT, GT, N_vals)
             
-            print('')
+            self.logger.info('')
             for n, ndx in enumerate(recallN):
-                print('Recall at N='+str(N_vals[n])+': '+str(round(ndx,2)))
+                self.logger.info('Recall at N='+str(N_vals[n])+': '+str(round(ndx,2)))
 
-            
         # if using cuda, clear and dump the memory usage
         if self.device =='cuda':
             gc.collect()
             torch.cuda.empty_cache()
     
-    def sad(self):
-        
-        print('')
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print('Setting up Sum of Absolute Differences (SAD) calculations')    
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print('')
-        
-        sadcorrect = 0
-        
-        # load the training images
-        self.location_repeat = 1 # switch to only do SAD on one dataset traversal
-        self.fullTrainPaths = self.fullTrainPaths[1]
-        self.test_true = False # testing images preloaded, load the training ones
-        # load the training images
-        self.imgs['training'], self.ids['training'] = ut.loadImages(self.test_true,
-                                            self.fullTrainPaths,
-                                            self.filteredNames,
-                                            [self.imWidth,self.imHeight],
-                                            self.num_patches,
-                                            self.testPath,
-                                            self.test_location)
-        
-        # port images to cpu
-        #for n, ndx in enumerate(self.imgs['training']):
-           # self.imgs['training'][n] = ndx.cpu()
-        #for n, ndx in enumerate(self.imgs['testing']):
-            #self.imgs['testing'][n] = ndx.cpu()
-        
-        # create database tensor
-        for ndx, n in enumerate(self.imgs['training']):
-            if ndx == 0:
-                db = torch.unsqueeze(n,0)
-            else:
-                db = torch.concat((db,torch.unsqueeze(n,0)),0)
-        
-        def calc_sad(query, database, const):
-            
-            SAD = torch.sum(torch.abs((database * const) -  (query * const)),
-                           (1,2),keepdim=True)
-            for n in range(2):
-                SAD = torch.squeeze(SAD,-1)
-            return SAD
-        
-        # calculate SAD for each image to database and count correct number
-        imgred = 1/(self.imWidth*self.imHeight)
-        sad_concat = []
-        print('Running SAD')
-        correctidx = []
-        incorrectidx = []
-        start = timeit.default_timer()
-        for n, q in enumerate(self.imgs['testing']):
-            results = []
-            pixels = torch.empty([])
-
-            # create 3D tensor of query images
-            for o in range(self.number_testing_images):
-                if o == 0:
-                    pixels = torch.unsqueeze(q,0)
-                else:
-                    pixels = torch.concat((pixels,torch.unsqueeze(q,0)),0)
-                
-            sad_score = calc_sad(pixels, db, imgred)
-            
-            best_match = np.argmin(sad_score.cpu().numpy())
-            if n == best_match:
-                sadcorrect += 1
-                correctidx.append(n)
-            else:
-                incorrectidx.append(n)
-            if self.validation:
-                sad_concat.append(sad_score.cpu().numpy())
-                
-        end = timeit.default_timer()   
-        p100r = round((sadcorrect/self.number_testing_images)*100,2)
-        print('')
-        print('Sum of absolute differences P@1: '+
-              str(p100r)+'%')
-        print('Sum of absolute differences queried at '
-              +str(round(self.number_testing_images/(end-start),2))+'Hz')
-        
-        print('Network to sum of absolute differences ratio '+
-              str(round(self.p100r/p100r,2)))
-    
-        if self.validation:
-            # reshape similarity matrix
-            sad_concat = np.array(sad_concat)
-            sim_mat = np.reshape(sad_concat,(self.number_training_images,
-                                               self.number_testing_images))
-            
-            # plot the similarity matrix
-            fig = plt.figure()
-            plt.matshow(sim_mat,fig,cmap='Greys')
-            plt.colorbar(label="Sum of absolute differences")
-            fig.suptitle("Similarity matrix - SAD",fontsize = 12)
-            plt.xlabel("Query",fontsize = 12)
-            plt.ylabel("Databse",fontsize = 12)
-            plt.show()
-            
-            # generate the ground truth matrix
-            GT = np.zeros((self.number_training_images,self.number_testing_images), dtype=int)
-            for n in range(len(GT)):
-                GT[n,n] = 1
-                
-            # get the P & R 
-            sim_invert = 1/sim_mat # invert matrix so lowest SAD is highest value
-            P,R = createPR(sim_invert, GT, GT)
-            
-            # make the PR curve
-            fig = plt.figure()
-            plt.plot(R,P)
-            fig.suptitle("SAD Precision Recall curve",fontsize = 12)
-            plt.xlabel("Recall",fontsize = 12)
-            plt.ylabel("Precision",fontsize = 12)
-            plt.show()
-            
-            # calculate the recall at N
-            N_vals = [1,5,10,15,20,25]
-            recallN = ut.recallAtN(sim_invert, GT, GT, N_vals)
-            
-            print('')
-            for n, ndx in enumerate(recallN):
-                print('Recall at N='+str(N_vals[n])+': '+str(round(ndx,2)))
 '''
 Run the network
 '''        
 if __name__ == "__main__":
     
+    start = timeit.default_timer()
     # Instantiate model
     model = snn_model()
     
@@ -808,15 +726,7 @@ if __name__ == "__main__":
     # Tests the network
     model.initialize('testing') # Initializes the testing network
     model.networktester() # Test the network
-    model.sad()
-
-
-    #for n in range(1):
-     #   model = snn_model()
-      #  model.initialize('training')
-       # model.train()
-        #model.initialize('testing')
-        #model.networktester()
-        #model.sad()
-        #gc.collect()
-        #torch.cuda.empty_cache()
+    model.logger.info('')
+    model.logger.info('VPRTempo run completed in '+str(round((timeit.default_timer()-start)/60,2))+' mins')
+    model.logger.removeHandler(logging.StreamHandler()) # shut down the logger
+# %%

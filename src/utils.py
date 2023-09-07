@@ -181,41 +181,36 @@ def setSpikeRates(data,ids,device,dims,test_true,numImgs,numMods,intensity,locRe
      return spike_rates
 
 # plot similarity matrices
-def plot_similarity(mat,name,outfold):
+def plot_similarity(mat,name,outfold,cmap):
     
     fig = plt.figure()
-    plt.matshow(mat,fig, cmap=plt.cm.gist_yarg)
+    plt.matshow(mat,fig, cmap=cmap)
+    plt.gca().set_aspect('equal', adjustable='datalim')
     plt.colorbar(label="Spike amplitude")
     fig.suptitle(name,fontsize = 12)
     plt.xlabel("Query",fontsize = 12)
     plt.ylabel("Database",fontsize = 12)
     plt.show()
-    fig.savefig(outfold+name+'.png')
+    fig.savefig(outfold+name+'.pdf')
     
 
 # plot weight matrices
-def plot_weights(W,name,cmap,div,vmax,outfold):
+def plot_weights(W,name,cmap,div,vmax,outfold,dims):
     
-    # get the dimensions of the weight matrices
-    dims = [len(W[0,:,0]),len(W[0,0,:])]
-    
-    # calculate the output weight dimensions
-    x = int(len(W[:,0,0])/div)
-    y = int(len(W[:,0,0])/x)
-    newx = x * dims[0]
-    newy = y * dims[1]
+    newx =  dims[0]
+    newy = dims[1]
     
     # loop through expert modules and output weights
     init_weight = np.array([])
     for n in range(len(W[:,0,0])):
         init_weight = np.append(init_weight,np.reshape(W[n,:,:].cpu().numpy(),
-                                                        (dims[0]*dims[1],)))
+                                                        (dims[2],)))
     
     # reshape the weight matrices
     reshape_weight = np.reshape(init_weight,(newx,newy))
     
-    if np.any(reshape_weight<0):
-        reshape_weight = reshape_weight * -1
+    #if np.any(reshape_weight<0):
+       # reshape_weight = reshape_weight * -1
     
     fig = plt.figure()
     plt.matshow(reshape_weight,fig, cmap=cmap, vmin=0, vmax=vmax)
@@ -224,7 +219,7 @@ def plot_weights(W,name,cmap,div,vmax,outfold):
     plt.xlabel("x-weights",fontsize = 12)
     plt.ylabel("y-weights",fontsize = 12)
     plt.show()
-    fig.savefig(outfold+name+'.png')
+    fig.savefig(outfold+name+'.pdf')
     
 # run recallAtK() function from VPR Tutorial
 def recallAtN(S_in, GThard, GTsoft, N):
@@ -259,6 +254,12 @@ def sad(self):
                                         self.testPath,
                                         self.test_location)
     
+    # port images to cpu
+    #for n, ndx in enumerate(self.imgs['training']):
+       # self.imgs['training'][n] = ndx.cpu()
+    #for n, ndx in enumerate(self.imgs['testing']):
+        #self.imgs['testing'][n] = ndx.cpu()
+    
     # create database tensor
     for ndx, n in enumerate(self.imgs['training']):
         if ndx == 0:
@@ -276,12 +277,15 @@ def sad(self):
     
     # calculate SAD for each image to database and count correct number
     imgred = 1/(self.imWidth*self.imHeight)
-    sad_concat = np.array([])
+    sad_concat = []
     print('Running SAD')
+    correctidx = []
+    incorrectidx = []
     start = timeit.default_timer()
     for n, q in enumerate(self.imgs['testing']):
         results = []
         pixels = torch.empty([])
+
         # create 3D tensor of query images
         for o in range(self.number_testing_images):
             if o == 0:
@@ -291,12 +295,14 @@ def sad(self):
             
         sad_score = calc_sad(pixels, db, imgred)
         
-        best_match = np.argmin(sad_score.numpy())
+        best_match = np.argmin(sad_score.cpu().numpy())
         if n == best_match:
             sadcorrect += 1
-            
+            correctidx.append(n)
+        else:
+            incorrectidx.append(n)
         if self.validation:
-            sad_concat = np.append(sad_concat,sad_score.cpu().numpy())
+            sad_concat.append(sad_score.cpu().numpy())
             
     end = timeit.default_timer()   
     p100r = round((sadcorrect/self.number_testing_images)*100,2)
@@ -311,6 +317,7 @@ def sad(self):
 
     if self.validation:
         # reshape similarity matrix
+        sad_concat = np.array(sad_concat)
         sim_mat = np.reshape(sad_concat,(self.number_training_images,
                                            self.number_testing_images))
         
@@ -341,17 +348,9 @@ def sad(self):
         plt.show()
         
         # calculate the recall at N
-        rn1 = recallAtK(sim_invert, GT, GT, K=1)
-        rn5 = recallAtK(sim_invert, GT, GT, K=5)
-        rn10 = recallAtK(sim_invert, GT, GT, K=10)
-        rn15 = recallAtK(sim_invert, GT, GT, K=15)
-        rn20 = recallAtK(sim_invert, GT, GT, K=20)
-        rn25 = recallAtK(sim_invert, GT, GT, K=25)
+        N_vals = [1,5,10,15,20,25]
+        recallN = ut.recallAtN(sim_invert, GT, GT, N_vals)
         
         print('')
-        print('Recall at N='+str(1)+': '+str(rn1))
-        print('Recall at N='+str(5)+': '+str(rn5))
-        print('Recall at N='+str(10)+': '+str(rn10))
-        print('Recall at N='+str(15)+': '+str(rn15))
-        print('Recall at N='+str(20)+': '+str(rn20))
-        print('Recall at N='+str(25)+': '+str(rn25))
+        for n, ndx in enumerate(recallN):
+            print('Recall at N='+str(N_vals[n])+': '+str(round(ndx,2)))
