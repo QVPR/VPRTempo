@@ -31,8 +31,11 @@ import torch
 
 import numpy as np
 import matplotlib.pyplot as plt
+import utils as ut
 
-from metrics import recallAtK
+from metrics import recallAtK, createPR
+from timeit import default_timer
+
 
 def get_patches2D(patch_size,image_pad):
     
@@ -191,7 +194,7 @@ def plot_similarity(mat,name,outfold,cmap):
     plt.xlabel("Query",fontsize = 12)
     plt.ylabel("Database",fontsize = 12)
     plt.show()
-    fig.savefig(outfold+name+'.pdf')
+    fig.savefig(outfold+name+'.pdf', dpi=600)
     
 
 # plot weight matrices
@@ -219,7 +222,7 @@ def plot_weights(W,name,cmap,div,vmax,outfold,dims):
     plt.xlabel("x-weights",fontsize = 12)
     plt.ylabel("y-weights",fontsize = 12)
     plt.show()
-    fig.savefig(outfold+name+'.pdf')
+    fig.savefig(outfold+name+'.pdf',dpi=600)
     
 # run recallAtK() function from VPR Tutorial
 def recallAtN(S_in, GThard, GTsoft, N):
@@ -231,126 +234,97 @@ def recallAtN(S_in, GThard, GTsoft, N):
         
     return recall_list
       
-def sad(self):
-    
+def sad(fullTrainPaths, filteredNames, imWidth, imHeight, num_patches, testPath, 
+        test_location, imgs, ids, number_testing_images, number_training_images,
+        validation):
+
     print('')
     print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-    print('Setting up Sum of Absolute Differences (SAD) calculations')    
+    print('Setting up Sum of Absolute Differences (SAD) calculations')
     print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
     print('')
-    
+
     sadcorrect = 0
-    
     # load the training images
-    self.location_repeat = 1 # switch to only do SAD on one dataset traversal
-    self.fullTrainPaths = self.fullTrainPaths[1]
-    self.test_true = False # testing images preloaded, load the training ones
-    # load the training images
-    self.imgs['training'], self.ids['training'] = ut.loadImages(self.test_true,
-                                        self.fullTrainPaths,
-                                        self.filteredNames,
-                                        [self.imWidth,self.imHeight],
-                                        self.num_patches,
-                                        self.testPath,
-                                        self.test_location)
-    
-    # port images to cpu
-    #for n, ndx in enumerate(self.imgs['training']):
-       # self.imgs['training'][n] = ndx.cpu()
-    #for n, ndx in enumerate(self.imgs['testing']):
-        #self.imgs['testing'][n] = ndx.cpu()
+    imgs['training'], ids['training'] = ut.loadImages(False, 
+                                                      fullTrainPaths, 
+                                                      filteredNames, 
+                                                      [imWidth,imHeight], 
+                                                      num_patches, 
+                                                      testPath, 
+                                                      test_location)
+    del imgs['training'][number_training_images:len(imgs['training'])]
     
     # create database tensor
-    for ndx, n in enumerate(self.imgs['training']):
+    for ndx, n in enumerate(imgs['training']):
         if ndx == 0:
             db = torch.unsqueeze(n,0)
         else:
-            db = torch.concat((db,torch.unsqueeze(n,0)),0)
-    
+            db = torch.cat((db, torch.unsqueeze(n,0)), 0)
+
     def calc_sad(query, database, const):
-        
-        SAD = torch.sum(torch.abs((database * const) -  (query * const)),
-                       (1,2),keepdim=True)
+        SAD = torch.sum(torch.abs((database * const) - (query * const)), (1,2), keepdim=True)
         for n in range(2):
             SAD = torch.squeeze(SAD,-1)
         return SAD
-    
+
     # calculate SAD for each image to database and count correct number
-    imgred = 1/(self.imWidth*self.imHeight)
+    imgred = 1/(imWidth * imHeight)
     sad_concat = []
+
     print('Running SAD')
     correctidx = []
     incorrectidx = []
-    start = timeit.default_timer()
-    for n, q in enumerate(self.imgs['testing']):
-        results = []
+
+    start = default_timer()
+    for n, q in enumerate(imgs['testing']):
         pixels = torch.empty([])
 
         # create 3D tensor of query images
-        for o in range(self.number_testing_images):
+        for o in range(number_testing_images):
             if o == 0:
                 pixels = torch.unsqueeze(q,0)
             else:
-                pixels = torch.concat((pixels,torch.unsqueeze(q,0)),0)
-            
-        sad_score = calc_sad(pixels, db, imgred)
+                pixels = torch.cat((pixels,torch.unsqueeze(q,0)),0)
         
+        sad_score = calc_sad(pixels, db, imgred)
         best_match = np.argmin(sad_score.cpu().numpy())
+
         if n == best_match:
             sadcorrect += 1
             correctidx.append(n)
         else:
             incorrectidx.append(n)
-        if self.validation:
-            sad_concat.append(sad_score.cpu().numpy())
-            
-    end = timeit.default_timer()   
-    p100r = round((sadcorrect/self.number_testing_images)*100,2)
-    print('')
-    print('Sum of absolute differences P@1: '+
-          str(p100r)+'%')
-    print('Sum of absolute differences queried at '
-          +str(round(self.number_testing_images/(end-start),2))+'Hz')
-    
-    print('Network to sum of absolute differences ratio '+
-          str(round(self.p100r/p100r,2)))
 
-    if self.validation:
-        # reshape similarity matrix
-        sad_concat = np.array(sad_concat)
-        sim_mat = np.reshape(sad_concat,(self.number_training_images,
-                                           self.number_testing_images))
-        
-        # plot the similarity matrix
-        fig = plt.figure()
-        plt.matshow(sim_mat,fig,cmap='Greys')
-        plt.colorbar(label="Sum of absolute differences")
-        fig.suptitle("Similarity matrix - SAD",fontsize = 12)
-        plt.xlabel("Query",fontsize = 12)
-        plt.ylabel("Databse",fontsize = 12)
-        plt.show()
-        
-        # generate the ground truth matrix
-        GT = np.zeros((self.number_training_images,self.number_testing_images), dtype=int)
-        for n in range(len(GT)):
-            GT[n,n] = 1
-            
-        # get the P & R 
-        sim_invert = 1/sim_mat # invert matrix so lowest SAD is highest value
-        P,R = createPR(sim_invert, GT, GT)
-        
-        # make the PR curve
-        fig = plt.figure()
-        plt.plot(R,P)
-        fig.suptitle("SAD Precision Recall curve",fontsize = 12)
-        plt.xlabel("Recall",fontsize = 12)
-        plt.ylabel("Precision",fontsize = 12)
-        plt.show()
-        
-        # calculate the recall at N
-        N_vals = [1,5,10,15,20,25]
-        recallN = ut.recallAtN(sim_invert, GT, GT, N_vals)
-        
-        print('')
-        for n, ndx in enumerate(recallN):
-            print('Recall at N='+str(N_vals[n])+': '+str(round(ndx,2)))
+        if validation:
+            sad_concat.append(sad_score.cpu().numpy())
+
+    end = default_timer()   
+
+    p100r_local = round((sadcorrect/number_testing_images)*100,2)
+    print('')
+    print('Sum of absolute differences P@1: '+ str(p100r_local) + '%')
+    print('Sum of absolute differences queried at ' + str(round(number_testing_images/(end-start),2)) + 'Hz')
+    
+    GT = np.zeros((number_testing_images,number_training_images), dtype=int)
+    for n in range(len(GT)):
+        GT[n,n] = 1
+    sad_concat = (1-np.reshape(np.array(sad_concat),(number_training_images,number_testing_images)))
+    P,R  = createPR(sad_concat,GT,GT,matching="single")
+    for n, ndx in enumerate(P):
+        P[n] = round(ndx,2)
+        R[n] = round(R[n],2)
+
+    # make the PR curve
+    fig = plt.figure()
+    plt.plot(R,P)
+    fig.suptitle("Precision Recall curve",fontsize = 12)
+    plt.xlabel("Recall",fontsize = 12)
+    plt.ylabel("Precision",fontsize = 12)
+    plt.show()
+    
+    # calculate the recall at N
+    N_vals = [1,5,10,15,20,25]
+    recallN = ut.recallAtN(sad_concat, GT, GT, N_vals)
+    
+    return P,R,recallN,N_vals
