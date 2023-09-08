@@ -62,12 +62,12 @@ class snn_model():
         self.dataset = 'nordland' # set which dataset to run network on
         self.trainingPath = '/home/adam/data/nordland/' # training datapath
         self.testPath = '/home/adam/data/nordland/'  # testing datapath
-        self.number_modules = 1 # number of module networks
-        self.number_training_images = 1000 # Alter number of training images
-        self.number_testing_images = 1000 # Alter number of testing images
+        self.number_modules = 3 # number of module networks
+        self.number_training_images =2700 # Alter number of training images
+        self.number_testing_images = 2700 # Alter number of testing images
         self.locations = ["fall","spring"] # Define the datasets used in the training
         self.test_location = "summer" # Define the dataset is used for testing
-        self.filter = 1 # Set to number of images to filter
+        self.filter = 8 # Set to number of images to filter
         self.validation = True # Set to True to calculate PR metrics
         
         assert (len(self.dataset) != 0),"Dataset not defined, see README.md for details on setting up images"
@@ -223,7 +223,7 @@ class snn_model():
                                             self.num_patches,
                                             self.testPath,
                                             self.test_location)
-        
+
         self.spike_rates[condition] = ut.setSpikeRates(self.imgs[condition],
                                            self.ids[condition],
                                             self.device,
@@ -636,7 +636,18 @@ class snn_model():
             nidx = np.argmax(tonump)
 
             if gt_ind == nidx:
-               numcorrect += 1
+                numcorrect += 1
+                #fig = plt.figure()
+                #plt.matshow(self.imgs['testing'][t].cpu().numpy(),fig,cmap=plt.cm.rainbow)
+                #plt.axis('off')
+                #fig.set_facecolor('green')
+                #plt.show()
+            #else:
+                #fig = plt.figure()
+                #plt.matshow(self.imgs['testing'][t].cpu().numpy(),fig,cmap=plt.cm.rainbow)
+                #plt.axis('off')
+                #fig.set_facecolor('red')
+                #plt.show()
             
             if self.validation: # get similarity matrix for PR curve generation
                numpconc.append(tonump.tolist())
@@ -680,7 +691,11 @@ class snn_model():
                                 plt.cm.tab20c)   
             
             # get the P & R 
-            P,R = createPR(sim_mat, GT, GT)
+            P,R = createPR(sim_mat, GT, GT, matching="single")
+            for n, ndx in enumerate(P):
+                P[n] = round(ndx,2)
+                R[n] = round(R[n],2)
+                
             self.logger.info('Precision values: '+str(P))
             self.logger.info('Recall values: '+str(R))
 
@@ -704,7 +719,21 @@ class snn_model():
         if self.device =='cuda':
             gc.collect()
             torch.cuda.empty_cache()
-    
+
+    def run_sad(self):
+
+        P,R,recallN,N_vals = ut.sad(self.fullTrainPaths, self.filteredNames, self.imWidth, 
+                self.imHeight, self.num_patches, self.testPath, self.test_location, 
+                self.imgs, self.ids, self.number_testing_images, self.number_training_images,
+                self.validation)
+       
+        self.logger.info('Precision values: '+str(P))
+        self.logger.info('Recall values: '+str(R))
+
+       
+        self.logger.info('')
+        for n, ndx in enumerate(recallN):
+            self.logger.info('Recall at N='+str(N_vals[n])+': '+str(round(ndx,2)))
 '''
 Run the network
 '''        
@@ -726,6 +755,7 @@ if __name__ == "__main__":
     # Tests the network
     model.initialize('testing') # Initializes the testing network
     model.networktester() # Test the network
+    model.run_sad() # Run Sum of Absolute Differences
     model.logger.info('')
     model.logger.info('VPRTempo run completed in '+str(round((timeit.default_timer()-start)/60,2))+' mins')
     model.logger.removeHandler(logging.StreamHandler()) # shut down the logger
