@@ -54,7 +54,7 @@ def createPR(S_in, GThard, GTsoft=None, matching='multi', n_thresh=100):
     # single-best-match or multi-match VPR
     if matching == 'single':
         # count the number of ground-truth positives (GTP)
-        GTP = np.count_nonzero(GT.any(0))
+        GTP = np.count_nonzero(GT)
 
         # GT-values for best match per query (i.e., per column)
         GT = GT[np.nanargmax(S, axis=0), np.arange(GT.shape[1])]
@@ -71,8 +71,8 @@ def createPR(S_in, GThard, GTsoft=None, matching='multi', n_thresh=100):
     P = [1, ]
 
     # select start and end treshold
-    startV = np.nanmax(S)  # start-value for treshold
-    endV = np.nanmin(S)  # end-value for treshold
+    startV = np.max(S)  # start-value for treshold
+    endV = np.min(S)  # end-value for treshold
 
     # iterate over different thresholds
     for i in np.linspace(startV, endV, n_thresh):
@@ -83,7 +83,7 @@ def createPR(S_in, GThard, GTsoft=None, matching='multi', n_thresh=100):
 
         P.append(TP / (TP + FP))  # precision
         R.append(TP / GTP)  # recall
-
+    pause=1
     return P, R
 
 
