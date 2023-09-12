@@ -63,9 +63,9 @@ class snn_model():
         self.trainingPath = '/home/adam/data/nordland/' # training datapath
         self.testPath = '/home/adam/data/nordland/'  # testing datapath
         self.number_modules = 3 # number of module networks
-        self.number_training_images =2700 # Alter number of training images
-        self.number_testing_images = 2700 # Alter number of testing images
-        self.locations = ["fall","spring"] # Define the datasets used in the training
+        self.number_training_images = 300 # Alter number of training images
+        self.number_testing_images = 300 # Alter number of testing images
+        self.locations = ["spring","fall"] # Define the datasets used in the training
         self.test_location = "summer" # Define the dataset is used for testing
         self.filter = 8 # Set to number of images to filter
         self.validation = True # Set to True to calculate PR metrics
@@ -130,7 +130,6 @@ class snn_model():
         self.filteredNames = []
         for n in range(0,len(self.imageNames),self.filter):
             self.filteredNames.append(self.imageNames[n])
-        
         del self.filteredNames[self.number_training_images:len(self.filteredNames)]
 
         # Get the full training and testing data paths    
@@ -294,14 +293,17 @@ class snn_model():
         
         # begin timer for network training
         start = timeit.default_timer()
+        
         # Set the spikes times for the input images
         net['set_spks'][0] = self.spike_rates['training']
         layers = [len(net['W'])-2, len(net['W'])-1, len(net['W_lyr'])-1]
-        # Train the input to feature layer
-        # Train the feature layer
+        
+        # Train the input to feature layer for specified amount of epochs
         for epoch in range(self.epoch):
             net['step_num'] = 0
             epochStart = timeit.default_timer()
+            
+            # loop through each image and train the network
             for t in range(int(self.T)):
                 bn.runSim(net,1,self.device,layers)
                 torch.cuda.empty_cache()
@@ -311,6 +313,8 @@ class snn_model():
                     net['eta_ip'][1] = self.n_itp*pt
                     net['eta_stdp'][0] = self.n_init*pt
                     net['eta_stdp'][1] = -1*self.n_init*pt
+            
+            # print training details
             self.logger.info('Epoch '+str(epoch+1)+' trained in: '
                   +str(round(timeit.default_timer()-epochStart,2))+'s')
             self.logger.info('')
@@ -362,10 +366,12 @@ class snn_model():
         net['set_spks'][0] = [] # remove input spikes
         layers = [len(net['W'])-2, len(net['W'])-1, len(net['W_lyr'])-1]
         
-        # Train the feature to output layer   
+        # Train the feature to output layer for specified number of epochs 
         for epoch in range(self.epoch):
             net['step_num'] = 0
             epochStart = timeit.default_timer()
+            
+            # Loop through all the spikes generated in the feature layer to train output
             for t in range(self.T):
                 out_spks = torch.tensor([0],device=self.device,dtype=float)
 
@@ -383,6 +389,8 @@ class snn_model():
                     net['eta_stdp'][3] = -1*self.n_init*pt
                 if np.mod((t+1),(int(self.T/self.location_repeat))) == 0:
                     net['step_num'] = 0     
+            
+            # print training details
             self.logger.info('Epoch '+str(epoch+1)+' trained in: '
                   +str(round(timeit.default_timer()-epochStart,2))+'s')
             self.logger.info('')
@@ -403,6 +411,7 @@ class snn_model():
         # Clear the network output spikes
         net['set_spks'][-1] = []
         net['spike_dims'] = self.input_layer
+        
         # Reset network details
         net['sspk_idx'] = [0,0,0]
         net['step_num'] = 0
@@ -428,166 +437,6 @@ class snn_model():
         # if using cuda, clear and dump the memory usage
         if self.device =='cuda':
             del self.spike_rates
-            gc.collect()
-            torch.cuda.empty_cache()
-    
-    def validate(self): 
-        
-        # unpickle the network
-        self.logger.info('Unpickling the network')
-        with open(self.training_out+'net.pkl', 'rb') as f:
-             net = pickle.load(f)
-        
-        self.logger.info('Validating network training')
-        # set input spikes for training data from one location
-        net['set_spks'][0] = ut.setSpikeRates(
-                        self.imgs['training'][0:self.number_training_images],
-                        self.ids['training'][0:self.number_training_images],
-                        self.device,
-                        [self.imWidth,self.imHeight],
-                        True,
-                        self.number_training_images,
-                        self.number_modules,
-                        self.intensity,
-                        self.location_repeat)
-        
-        # correct place matches variable
-        numcorrect = 0
-        
-        if self.validation:
-            outconcat = []
-        
-        # run the test network on training data to evaluate network performance
-        start = timeit.default_timer()
-        for t in range(self.number_training_images):
-            tonump = np.array([])
-            bn.testSim(net,device=self.device)
-            # output the index of highest amplitude spike
-            tonump = np.append(tonump,
-                               np.reshape(net['x'][-1].cpu().numpy(),
-                              [1,1,int(self.number_training_images)]))
-            nidx = np.argmax(tonump)
-            
-            if self.validation:
-                outconcat.append(tonump.tolist())
-            
-            gt_ind = self.filteredNames.index(self.filteredNames[t])
-            
-            # adjust number of correct matches if GT matches peak output
-            if gt_ind == nidx:
-               numcorrect += 1
-               
-        end = timeit.default_timer()
-        
-        # network must match >95% of training places to be succesfull
-        p100r = (numcorrect/self.number_training_images)*100
-        testFlag = (p100r>75)
-        if testFlag: # network training was successfull
-            
-            self.logger.info('')
-            self.logger.info('Network training successful!')
-            self.logger.info('')
-            
-            self.logger.info('Perfomance details:')
-            self.logger.info("-------------------------------------------")
-            self.logger.info('P@100R: '+str(p100r)+
-                  '%  |  Query frequency: '+
-                  str(round(self.number_training_images/(end-start),2))+'Hz')
-            self.logger.info('')
-            
-            # create output folder (if it does not already exist)
-            if not os.path.isdir(self.training_out):
-                os.mkdir(self.training_out)
-            if not os.path.isdir(self.training_out+'images/'):
-                os.mkdir(self.training_out+'images/')
-            if not os.path.isdir(self.training_out+'images/training/'):
-                os.mkdir(self.training_out+'images/training/')
-            
-            # plot the similarity matrix for network validation
-            if self.validation:
-                outconcat = np.array(outconcat)
-                concatReshape = np.reshape(outconcat,
-                                           (self.number_training_images,
-                                            self.number_training_images))
-                folderName = self.output_folder+'/similarity/'
-                os.mkdir(folderName)
-                plot_name = "Similarity: network training validation"
-                ut.plot_similarity(concatReshape,plot_name,
-                                   folderName,
-                                   plt.cm.gist_yarg)
-                
-            # Reset network details
-            net['sspk_idx'] = [0,0,0]
-            net['step_num'] = 0
-            net['spikes'] = [[],[],[]]
-            net['x'] = [[],[],[]]
-            net['set_spks'][0] = 0
-            
-           # plot the weight matrices
-            cmap = plt.cm.magma
-            cmap_reverse = plt.colormaps.get_cmap('magma_r')
-            
-            self.logger.info('Plotting weight matrices')
-            # make weights folder
-            weights_folder = self.output_folder+'/weights/'
-            os.mkdir(weights_folder)
-            
-            # get the maximum weight value for each set
-            IF_Exc = torch.max(net['W'][0]).cpu().numpy()
-            IF_Inh = torch.min(net['W'][1]).cpu().numpy()
-            FO_Exc = torch.max(net['W'][2]).cpu().numpy()
-            FO_Inh = torch.min(net['W'][3]).cpu().numpy()
-            
-            # find highest divisors of weight matrices for plotting
-            def closestDivisors(n):
-                factor1 = round(math.sqrt(n))
-                while n%factor1 > 0: factor1 -= 1
-                return factor1, n//factor1
-            
-            factor1IF, factor2IF = closestDivisors(len(net['W'][0][0][0])*len(net['W'][0][0])*self.number_modules)
-            factor1FO, factor2FO = closestDivisors(len(net['W'][2][0][0])*len(net['W'][2][0])*self.number_modules)
-            
-            # initial weights
-            ut.plot_weights(self.init_weights[0],'Initial I->F Excitatory Weights',
-                            cmap,self.number_modules,IF_Exc,weights_folder,
-                            [factor1IF,factor2IF,int((factor1IF*factor2IF)/self.number_modules)])
-            ut.plot_weights(self.init_weights[1], 'Initial I->F Inhibitory Weights',
-                            cmap_reverse,self.number_modules,IF_Inh,weights_folder,
-                            [factor1IF,factor2IF,int((factor1IF*factor2IF)/self.number_modules)])
-            ut.plot_weights(self.init_weights[2], 'Initial F->O Excitatory Weights',
-                            cmap,self.number_modules,FO_Exc,weights_folder,
-                            [factor1FO,factor2FO,int((factor1FO*factor2FO)/self.number_modules)])
-            ut.plot_weights(self.init_weights[3], 'Initial F->O Inhibitory Weights',
-                            cmap_reverse,self.number_modules,FO_Inh,weights_folder,
-                            [factor1FO,factor2FO,int((factor1FO*factor2FO)/self.number_modules)])
-            
-            # calculated weights
-            ut.plot_weights(net['W'][0],'I->F Excitatory Weights',
-                            cmap,self.number_modules,IF_Exc,weights_folder,
-                            [factor1IF,factor2IF,int((factor1IF*factor2IF)/self.number_modules)])
-            ut.plot_weights(net['W'][1], 'I->F Inhibitory Weights',
-                            cmap_reverse,self.number_modules,IF_Inh,weights_folder,
-                            [factor1IF,factor2IF,int((factor1IF*factor2IF)/self.number_modules)])
-            ut.plot_weights(net['W'][2],'F->O Excitatory Weights',
-                            cmap,self.number_modules,FO_Exc,weights_folder,
-                            [factor1FO,factor2FO,int((factor1FO*factor2FO)/self.number_modules)])
-            ut.plot_weights(net['W'][3], 'F->O Inhibitory Weights',
-                            cmap_reverse,self.number_modules,FO_Inh,weights_folder,
-                            [factor1FO,factor2FO,int((factor1FO*factor2FO)/self.number_modules)])
-            self.logger.info('Network formatting and saving...') 
-            
-            # Output the trained network
-            outputPkl = self.training_out + 'net.pkl'
-            with open(outputPkl, 'wb') as f:
-                pickle.dump(net, f)
-                
-            # output the ground truth image names for later testing
-            outputPkl = self.training_out + 'GT_imgnames.pkl'
-            with open(outputPkl, 'wb') as f:
-                pickle.dump(self.filteredNames, f)
-            
-            self.logger.info('Network succesfully saved!')
-        if self.device =='cuda':
             gc.collect()
             torch.cuda.empty_cache()
         '''
@@ -750,7 +599,7 @@ if __name__ == "__main__":
     if flg == 'y':
         model.initialize('training') # Initializes the training network
         model.train() # Run network training (will check if already trained)
-        model.validate() # Validates that the network trained properly
+        ut.validate(model) # Validates that the network trained properly
     
     # Tests the network
     model.initialize('testing') # Initializes the testing network
