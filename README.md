@@ -5,6 +5,10 @@
 
 This repository contains code for VPRTempo, a spiking neural network that uses temporally encoding to perform visual place recognition tasks. The network is based off of [BLiTNet](https://arxiv.org/pdf/2208.01204.pdf) and adapted to the [VPRSNN](https://github.com/QVPR/VPRSNN) framework. 
 
+<p style="width: 50%; display: block; margin-left: auto; margin-right: auto">
+  <img src="./assets/github_image.png" alt="VPRTempo method diagram"/>
+</p>
+
 ## License & Citation
 This repository is licensed under the [MIT License](./LICENSE)
 
@@ -26,15 +30,6 @@ conda create -n vprtempo -c pytorch -c nvidia python torchvision torchaudio pyto
 When running the code, it will automatically detect and print the device being used for the network. If your CUDA install was successful, you should expect an output like:
 
 ```python
-import torch
-
-print('CUDA available: '+str(torch.cuda.is_available()))
-if torch.cuda.is_available() == True:
-        current_device = torch.cuda.current_device()
-        print('Current device is: '+str(torch.cuda.get_device_name(current_device)))
-else:
-        print('Current device is: CPU')
-
 > CUDA available: True
 > Current device is: NVIDIA GeForce RTX 2080
 ```
@@ -66,9 +61,9 @@ cd ~/VPRTempo
 ## Datasets
 
 ### Nordland
-VPRTempo was developed and tested using the [Nordland](https://webdiis.unizar.es/~jmfacil/pr-nordland/#download-dataset) dataset, an approximately 729km traverse of the Nordland Railway in Norway recorded over the 4 seasons - Spring, Fall, Summer, & Winter. This software will work for either the full-resolution or down-sampled datasets, however our paper details the full-resolution datasets. 
+VPRTempo was developed and tested using the [Nordland](https://webdiis.unizar.es/~jmfacil/pr-nordland/#download-dataset). This software will work for either the full-resolution or down-sampled datasets, however our paper details the full-resolution datasets. 
 
-To simplify first usage, we have set the defaults in `VPRTempo.py` to train and test on a small subset of Nordland data. We recommend [downloading Nordland](https://webdiis.unizar.es/~jmfacil/pr-nordland/#download-dataset) and using the `./src/nordland.py` script to unzip and organize the images into the correct file structure.
+To simplify first usage, we have set the defaults in `VPRTempo.py` to train and test on a small subset of Nordland data. We recommend [downloading Nordland](https://webdiis.unizar.es/~jmfacil/pr-nordland/#download-dataset) and using the `./src/nordland.py` script to unzip and organize the images into the correct file and naming structure.
 
 ### Custom datasets
 In general, data should be organised in the following way in order to train the network on multiple traversals of the same location.
@@ -82,23 +77,17 @@ In general, data should be organised in the following way in order to train the 
   |--testing
   |  |--test_traversal
 ```
-Speicfy the datapaths by altering `self.trainingPath` and `self.testPath` in lines 60 and 61 of `VPRTempo.py`. You can specify which traversals you want to train and test on by also altering `self.locations` and `self.test_location` in lines 66 and 67. In the case above it would be the following; 
+Speicfy the datapaths by altering `self.trainingPath` and `self.testPath` in `VPRTempo.py`. You can specify which traversals you want to train and test on by also altering `self.locations` and `self.test_location`. In the case above it would be the following; 
 
 ```python
-60 self.trainingPath = '<path_to_data>/training/
-61 self.testPath = '<path_to_data>/testing/
+self.trainingPath = '<path_to_data>/training/
+self.testPath = '<path_to_data>/testing/
 
-66 self.locations = ["traversal_1","traversal_2"]
-67 self.test_location = "test_traversal"
+self.locations = ["traversal_1","traversal_2"]
+self.test_location = "test_traversal"
 ```
 
-Image names for the same locations across traversals (training and testing) must be the same as they are imported based on a `.txt` file. We provide an easy tool in `./src/generate_names.py` that will go through and make sure all the names are the same and generate a `.txt` file of image names and store it in the main folder.
-
-Once this has been done, you need to set `self.dataset` in line 59 to the name of the dataset being trained and tested so it can load the correct `.txt` filename.
-
-```python
-59 self.dataset = 'dataset'
-```
+Image names for the same locations across traversals (training and testing) must be the same as they are imported based on a `.txt` file. 
 
 ## Usage
 Both the training and testing is handled by the `VPRTempo.py` script. Initial installs do not contain any pre-defined networks and will need to be trained prior to use.
