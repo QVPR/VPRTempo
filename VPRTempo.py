@@ -1,4 +1,3 @@
-# %%
 #MIT License
 
 #Copyright (c) 2023 Adam Hines, Peter G Stratton, Michael Milford, Tobias Fischer
@@ -30,8 +29,7 @@ import os
 import torch
 import gc
 import timeit
-import math
-import shutil
+
 import logging
 import sys
 sys.path.append('./src')
@@ -41,11 +39,10 @@ sys.path.append('./output')
 
 import blitnet as bn
 import utils as ut
+import validation as val
 import numpy as np
-import matplotlib.pyplot as plt
 
 from os import path
-from metrics import createPR
 from datetime import datetime
 
 
@@ -60,19 +57,19 @@ class snn_model():
         USER SETTINGS
         '''
         self.dataset = 'nordland' # set which dataset to run network on
-        self.trainingPath = '/home/adam/data/nordland/' # training datapath
-        self.testPath = '/home/adam/data/nordland/'  # testing datapath
-        self.number_modules = 3 # number of module networks
-        self.number_training_images = 300 # Alter number of training images
-        self.number_testing_images = 300 # Alter number of testing images
+        self.trainingPath = '' # training datapath
+        self.testPath = '' # testing datapath
+        self.number_modules = 5 # number of module networks
+        self.number_training_images = 500 # Alter number of training images
+        self.number_testing_images = 500 # Alter number of testing images
         self.locations = ["spring","fall"] # Define the datasets used in the training
         self.test_location = "summer" # Define the dataset is used for testing
         self.filter = 8 # Set to number of images to filter
         self.validation = True # Set to True to calculate PR metrics
         
         assert (len(self.dataset) != 0),"Dataset not defined, see README.md for details on setting up images"
-        assert (os.path.isdir(self.trainingPath)),"Training path not set or path does not exist, edit line 60"
-        assert (os.path.isdir(self.testPath)),"Test path not set or path does not exist, edit line 61"
+        assert (os.path.isdir(self.trainingPath)),"Training path not set or path does not exist, specify for self.trainingPath"
+        assert (os.path.isdir(self.testPath)),"Test path not set or path does not exist, specify for self.testPath"
         assert (os.path.isdir(self.trainingPath+self.locations[0])),"Images must be organized into folders based on locations, see README.md for details"
         assert (os.path.isdir(self.testPath+self.test_location)),"Images must be organized into folders based on locations, see README.md for details"
         
@@ -175,6 +172,16 @@ class snn_model():
         self.logger.info('Excitatory connection probability: '+str(self.p_exc))
         self.logger.info('Inhibitory connection probability: '+str(self.p_inh))
         self.logger.info('Constant input: '+str(self.c))
+        self.logger.info('')
+        self.logger.info("~~ Training and testing conditions ~~")
+        self.logger.info('')
+        self.logger.info('Number of training images: '+str(self.number_training_images))
+        self.logger.info('Number of testing images: '+str(self.number_testing_images))
+        self.logger.info('Number of training epochs: '+str(self.epoch))
+        self.logger.info('Number of modules: '+str(self.number_modules))
+        self.logger.info('Dataset used: '+str(self.dataset))
+        self.logger.info('Training locations: '+str(self.locations))
+        self.logger.info('Testing location: '+str(self.test_location))
 
         # Network weights name
         self.training_out = './weights/'+str(self.input_layer)+'i'+\
@@ -239,20 +246,10 @@ class snn_model():
     def train(self):
 
         # remove contents of the weights folder
-        if os.path.isfile(self.training_out + 'net.pkl'):
-            os.remove(self.training_out+'net.pkl')
-        if os.path.isfile(self.training_out + 'GT_imgnames.pkl'):
-            os.remove(self.training_out+'GT_imgnames.pkl')
-        if os.path.isdir(self.training_out+'images/training/'):
-            shutil.rmtree(self.training_out+'images/training/')
-        if not os.path.isdir(self.training_out):
-            os.mkdir(self.training_out)
-        '''
-        Network startup and initialization
-        '''
-        
-        self.logger.info('Creating network and setting weights')
+        ut.clear_weights(self.training_out)
+
         # create a new blitnet netowrk
+        self.logger.info('Creating network and setting weights')
         net = bn.newNet(self.number_modules,self.imWidth*self.imHeight)
         
         # add the input layer
@@ -295,7 +292,11 @@ class snn_model():
         start = timeit.default_timer()
         
         # Set the spikes times for the input images
-        net['set_spks'][0] = self.spike_rates['training']
+        net['set_spks'][0] = torch.clone(self.spike_rates['training'])
+        self.spike_rates['training'] = []
+        if self.device == 'cuda':
+            torch.cuda.empty_cache()
+            gc.collect()    
         layers = [len(net['W'])-2, len(net['W'])-1, len(net['W_lyr'])-1]
         
         # Train the input to feature layer for specified amount of epochs
@@ -306,7 +307,6 @@ class snn_model():
             # loop through each image and train the network
             for t in range(int(self.T)):
                 bn.runSim(net,1,self.device,layers)
-                torch.cuda.empty_cache()
                 # anneal learning rates
                 if np.mod(t,10)==0:
                     pt = pow(float(self.T-t)/self.T,self.annl_pow)
@@ -321,8 +321,6 @@ class snn_model():
             
         self.logger.info('Finished training input to feature layer')
         
-        # delete the training images
-        
         '''
         Preparations for feature to output layer training
         '''
@@ -333,6 +331,7 @@ class snn_model():
         if self.p_inh > 0.0: net['eta_stdp'][1] = 0.0
         
         self.logger.info('Getting feature layer spikes for output layer training')
+
         # get the feature spikes for training the output layer
         net['x_feat'] = []
         net['step_num'] = 0
@@ -340,6 +339,12 @@ class snn_model():
             bn.runSim(net,1,self.device,layers)
             net['x_feat'].append(net['x'][1]) # dictionary output of feature spikes
             
+        # delete input spikes
+        net['set_spks'][0] = []
+        if self.device == 'cuda':
+            torch.cuda.empty_cache()
+            gc.collect()
+        
         self.logger.info('Creating output layer')    
         # Create and train the output layer with the feature layer
         bn.addLayer(net,[self.number_modules,1,self.output_layer],
@@ -436,13 +441,15 @@ class snn_model():
         
         # if using cuda, clear and dump the memory usage
         if self.device =='cuda':
+            del net
             del self.spike_rates
-            gc.collect()
+            del self.imgs
             torch.cuda.empty_cache()
-        '''
-     Run the testing network
-     '''
+            gc.collect()
 
+    '''
+     Run the testing network
+    '''
     def networktester(self):
          
         '''
@@ -486,17 +493,6 @@ class snn_model():
 
             if gt_ind == nidx:
                 numcorrect += 1
-                #fig = plt.figure()
-                #plt.matshow(self.imgs['testing'][t].cpu().numpy(),fig,cmap=plt.cm.rainbow)
-                #plt.axis('off')
-                #fig.set_facecolor('green')
-                #plt.show()
-            #else:
-                #fig = plt.figure()
-                #plt.matshow(self.imgs['testing'][t].cpu().numpy(),fig,cmap=plt.cm.rainbow)
-                #plt.axis('off')
-                #fig.set_facecolor('red')
-                #plt.show()
             
             if self.validation: # get similarity matrix for PR curve generation
                numpconc.append(tonump.tolist())
@@ -510,85 +506,22 @@ class snn_model():
         
         # if self.validation = True, get PR information and plot similarity matrix
         if self.validation:
-            
-            numpconc = np.array(numpconc)
-            
-            # make the output folder
-            folderName = self.output_folder+'/similarity/'
-            if not os.path.isdir(folderName):
-                os.mkdir(folderName)
-            
-            # reshape similarity matrix
-            sim_mat = np.reshape(numpconc,(self.number_testing_images,
-                                           self.number_training_images))
-            
-            # plot the similarity matrix
-            plot_name = "Similarity: Result"
-            ut.plot_similarity(sim_mat,plot_name,
-                                folderName,
-                                plt.cm.tab20c)
-            
-            # generate the ground truth matrix
-            GT = np.zeros((self.number_testing_images,self.number_training_images), dtype=int)
-            for n in range(len(GT)):
-                GT[n,n] = 1
-            
-            # plot the GT matrix
-            plot_name = "GT"
-            ut.plot_similarity(GT,plot_name,
-                                folderName,
-                                plt.cm.tab20c)   
-            
-            # get the P & R 
-            P,R = createPR(sim_mat, GT, GT, matching="single")
-            for n, ndx in enumerate(P):
-                P[n] = round(ndx,2)
-                R[n] = round(R[n],2)
-                
-            self.logger.info('Precision values: '+str(P))
-            self.logger.info('Recall values: '+str(R))
-
-            # make the PR curve
-            fig = plt.figure()
-            plt.plot(R,P)
-            fig.suptitle("Precision Recall curve",fontsize = 12)
-            plt.xlabel("Recall",fontsize = 12)
-            plt.ylabel("Precision",fontsize = 12)
-            plt.show()
-            
-            # calculate the recall at N
-            N_vals = [1,5,10,15,20,25]
-            recallN = ut.recallAtN(sim_mat, GT, GT, N_vals)
-            
-            self.logger.info('')
-            for n, ndx in enumerate(recallN):
-                self.logger.info('Recall at N='+str(N_vals[n])+': '+str(round(ndx,2)))
+            val.match_metrics(numpconc, 
+                              self.output_folder, 
+                              self.number_testing_images, 
+                              self.number_training_images, 
+                              self.logger)
 
         # if using cuda, clear and dump the memory usage
         if self.device =='cuda':
             gc.collect()
             torch.cuda.empty_cache()
 
-    def run_sad(self):
-
-        P,R,recallN,N_vals = ut.sad(self.fullTrainPaths, self.filteredNames, self.imWidth, 
-                self.imHeight, self.num_patches, self.testPath, self.test_location, 
-                self.imgs, self.ids, self.number_testing_images, self.number_training_images,
-                self.validation)
-       
-        self.logger.info('Precision values: '+str(P))
-        self.logger.info('Recall values: '+str(R))
-
-       
-        self.logger.info('')
-        for n, ndx in enumerate(recallN):
-            self.logger.info('Recall at N='+str(N_vals[n])+': '+str(round(ndx,2)))
 '''
 Run the network
 '''        
 if __name__ == "__main__":
     
-    start = timeit.default_timer()
     # Instantiate model
     model = snn_model()
     
@@ -599,13 +532,11 @@ if __name__ == "__main__":
     if flg == 'y':
         model.initialize('training') # Initializes the training network
         model.train() # Run network training (will check if already trained)
-        ut.validate(model) # Validates that the network trained properly
+        val.validate(model) # Validates that the network trained properly
     
     # Tests the network
     model.initialize('testing') # Initializes the testing network
     model.networktester() # Test the network
-    model.run_sad() # Run Sum of Absolute Differences
     model.logger.info('')
-    model.logger.info('VPRTempo run completed in '+str(round((timeit.default_timer()-start)/60,2))+' mins')
+    model.logger.info('VPRTempo run completed')
     model.logger.removeHandler(logging.StreamHandler()) # shut down the logger
-# %%
