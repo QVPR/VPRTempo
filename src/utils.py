@@ -29,8 +29,6 @@ import cv2
 import os
 import math
 import torch
-import pickle
-import timeit
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -188,17 +186,19 @@ def setSpikeRates(data,ids,device,dims,test_true,numImgs,numMods,intensity,locRe
      return spike_rates
 
 # plot similarity matrices
-def plot_similarity(mat,name,outfold,cmap):
+def plot_similarity(mat, name, cmap, ax=None, dpi=600):
     
-    fig = plt.figure()
-    plt.matshow(mat,fig, cmap=cmap)
-    plt.gca().set_aspect('equal', adjustable='datalim')
-    plt.colorbar(label="Spike amplitude")
-    fig.suptitle(name,fontsize = 12)
-    plt.xlabel("Query",fontsize = 12)
-    plt.ylabel("Database",fontsize = 12)
-    plt.show()
-    fig.savefig(outfold+name+'.pdf', dpi=600)
+    if ax is None:
+        fig, ax = plt.subplots(dpi=dpi,figsize=(8, 6))
+    else:
+        fig = ax.get_figure()
+
+    cax = ax.matshow(mat, cmap=cmap, aspect='equal')
+    fig.colorbar(cax, ax=ax, label="Spike amplitude")
+    ax.set_title(name,fontsize = 12)
+    ax.set_xlabel("Query",fontsize = 12)
+    ax.set_ylabel("Database",fontsize = 12)
+    
     
 
 # plot weight matrices
@@ -219,12 +219,40 @@ def plot_weights(W, name, cmap, vmax, dims, ax=None):
     else:
         fig = ax.get_figure()
 
+    # plot the weight matrix to specified subplot
     cax = ax.matshow(reshape_weight, cmap=cmap, vmin=0, vmax=vmax)
-    fig.colorbar(cax, ax=ax, label="Weight strength")
+    fig.colorbar(cax, ax=ax, label="Weight strength",shrink=0.5)
     
+    # set figure titles and labels
     ax.set_title(name, fontsize = 12)
     ax.set_xlabel("x-weights", fontsize = 12)
     ax.set_ylabel("y-weights", fontsize = 12)
+
+# plot PR curves
+def plot_PR(P, R, name, ax=None):
+
+    if ax is None:
+        fig, ax = plt.subplots()
+    else:
+        fig = ax.get_figure()
+
+    ax.plot(R, P)
+    ax.set_title(name, fontsize=12)
+    ax.set_xlabel("Recall", fontsize=12)
+    ax.set_ylabel("Precision", fontsize=12)
+
+# plot the recall@N
+def plot_recallN(recallN, N_vals, name, ax=None):
+    
+        if ax is None:
+            fig, ax = plt.subplots()
+        else:
+            fig = ax.get_figure()
+    
+        ax.plot(N_vals, recallN)
+        ax.set_title(name, fontsize=12)
+        ax.set_xlabel("N", fontsize=12)
+        ax.set_ylabel("Recall", fontsize=12)
     
 # run recallAtK() function from VPR Tutorial
 def recallAtN(S_in, GThard, GTsoft, N):
@@ -331,206 +359,11 @@ def sad(fullTrainPaths, filteredNames, imWidth, imHeight, num_patches, testPath,
     
     return P,R,recallN,N_vals
 
-def validate(model): 
-        
-    # unpickle the network
-    model.logger.info('Unpickling the network')
-    with open(model.training_out+'net.pkl', 'rb') as f:
-        net = pickle.load(f)
-    
-    model.logger.info('Validating network training')
-    # set input spikes for training data from one location
-    net['set_spks'][0] = ut.setSpikeRates(
-                        model.imgs['training'][0:model.number_training_images],
-                        model.ids['training'][0:model.number_training_images],
-                        model.device,
-                        [model.imWidth,model.imHeight],
-                        True,
-                        model.number_training_images,
-                        model.number_modules,
-                        model.intensity,
-                        model.location_repeat)
-    
-    # correct place matches variable
-    numcorrect = 0
-    
-    if model.validation:
-        outconcat = []
-    
-    # run the test network on training data to evaluate network performance
-    start = timeit.default_timer()
-    for t in range(model.number_training_images):
-        tonump = np.array([])
-        bn.testSim(net, device=model.device)
-        # output the index of highest amplitude spike
-        tonump = np.append(tonump,
-                            np.reshape(net['x'][-1].cpu().numpy(),
-                            [1,1,int(model.number_training_images)]))
-        nidx = np.argmax(tonump)
-        
-        if model.validation:
-            outconcat.append(tonump.tolist())
-        
-        gt_ind = model.filteredNames.index(model.filteredNames[t])
-        
-        # adjust number of correct matches if GT matches peak output
-        if gt_ind == nidx:
-            numcorrect += 1
-            
-    end = timeit.default_timer()
-    
-    # network must match >75% of training places to be successful
-    p100r = (numcorrect/model.number_training_images)*100
-    testFlag = (p100r>75)
-    if testFlag: # network training was successful
-        
-        model.logger.info('')
-        model.logger.info('Network training successful!')
-        model.logger.info('')
-        
-        model.logger.info('Performance details:')
-        model.logger.info("-------------------------------------------")
-        model.logger.info('P@100R: '+str(p100r)+
-              '%  |  Query frequency: '+
-              str(round(model.number_training_images/(end-start),2))+'Hz')
-        model.logger.info('')
-        
-        # create output folder (if it does not already exist)
-        if not os.path.isdir(model.training_out):
-            os.mkdir(model.training_out)
-        if not os.path.isdir(model.training_out+'images/'):
-            os.mkdir(model.training_out+'images/')
-        if not os.path.isdir(model.training_out+'images/training/'):
-            os.mkdir(model.training_out+'images/training/')
-        
-        # plot the similarity matrix for network validation
-        if model.validation:
-            outconcat = np.array(outconcat)
-            concatReshape = np.reshape(outconcat,
-                                        (model.number_training_images,
-                                        model.number_training_images))
-            folderName = model.output_folder+'/similarity/'
-            os.mkdir(folderName)
-            plot_name = "Similarity: network training validation"
-            ut.plot_similarity(concatReshape, plot_name,
-                                folderName,
-                                plt.cm.gist_yarg)
-            
-        # Reset network details
-        net['sspk_idx'] = [0,0,0]
-        net['step_num'] = 0
-        net['spikes'] = [[],[],[]]
-        net['x'] = [[],[],[]]
-        net['set_spks'][0] = 0
-        
-        # plot the weight matrices
-        cmap = plt.cm.magma
-        cmap_reverse = plt.cm.magma_r
-        
-        model.logger.info('Plotting weight matrices')
-        # make weights folder
-        weights_folder = model.output_folder+'/weights/'
-        os.mkdir(weights_folder)
-        
-        # get the maximum weight value for each set
-        IF_Exc = torch.max(net['W'][0]).cpu().numpy()
-        IF_Inh = torch.min(net['W'][1]).cpu().numpy()
-        FO_Exc = torch.max(net['W'][2]).cpu().numpy()
-        FO_Inh = torch.min(net['W'][3]).cpu().numpy()
-        
-        # find highest divisors of weight matrices for plotting
-        def closestDivisors(n):
-            factor1 = round(math.sqrt(n))
-            while n%factor1 > 0: factor1 -= 1
-            return factor1, n//factor1
-        
-        factor1IF, factor2IF = closestDivisors(len(net['W'][0][0][0])*len(net['W'][0][0])*model.number_modules)
-        factor1FO, factor2FO = closestDivisors(len(net['W'][2][0][0])*len(net['W'][2][0])*model.number_modules)
-        
-        # initial weights
-        fig, axes = plt.subplots(2, 2, figsize=(10, 10))
-        
-        ut.plot_weights(W=model.init_weights[0], 
-                        name='I->F Excitatory Weights', 
-                        cmap=cmap, 
-                        vmax=IF_Exc, 
-                        dims=[factor1IF, factor2IF, int((factor1IF*factor2IF)/model.number_modules)], 
-                        ax=axes[0, 0])
-
-        ut.plot_weights(W=model.init_weights[1], 
-                        name='I->F Inhibitory Weights', 
-                        cmap=cmap_reverse, 
-                        vmax=IF_Inh, 
-                        dims=[factor1IF, factor2IF, int((factor1IF*factor2IF)/model.number_modules)], 
-                        ax=axes[0, 1])
-
-        ut.plot_weights(W=model.init_weights[2], 
-                        name='F->O Excitatory Weights', 
-                        cmap=cmap, 
-                        vmax=FO_Exc, 
-                        dims=[factor1FO, factor2FO, int((factor1FO*factor2FO)/model.number_modules)],
-                          ax=axes[1, 0])
-
-        ut.plot_weights(W=model.init_weights[3], 
-                        name='F->O Inhibitory Weights', 
-                        cmap=cmap_reverse, 
-                        vmax=FO_Inh, 
-                        dims=[factor1FO, factor2FO, int((factor1FO*factor2FO)/model.number_modules)], 
-                        ax=axes[1, 1])
-
-
-        plt.tight_layout()
-        plt.show()
-
-        fig.savefig(weights_folder + 'Combined_Weights.pdf', dpi=600)
-        
-        # calculated weights
-        fig, axes = plt.subplots(2, 2, figsize=(10, 10))
-
-        ut.plot_weights(W=net['W'][0], 
-                        name='I->F Excitatory Weights', 
-                        cmap=cmap,
-                        vmax=IF_Exc, 
-                        dims=[factor1IF, factor2IF, int((factor1IF*factor2IF)/model.number_modules)], 
-                        ax=axes[0, 0])
-
-        ut.plot_weights(W=net['W'][1], 
-                        name='I->F Inhibitory Weights', 
-                        cmap=cmap_reverse, 
-                        vmax=IF_Inh, 
-                        dims=[factor1IF, factor2IF, int((factor1IF*factor2IF)/model.number_modules)], 
-                        ax=axes[0, 1])
-
-        ut.plot_weights(W=net['W'][2], 
-                        name='F->O Excitatory Weights', 
-                        cmap=cmap, 
-                        vmax=FO_Exc, 
-                        dims=[factor1FO, factor2FO, int((factor1FO*factor2FO)/model.number_modules)], 
-                        ax=axes[1, 0])
-
-        ut.plot_weights(W=net['W'][3], 
-                        name='F->O Inhibitory Weights', 
-                        cmap=cmap_reverse, 
-                        vmax=FO_Inh, 
-                        dims=[factor1FO, factor2FO, int((factor1FO*factor2FO)/model.number_modules)], 
-                        ax=axes[1, 1])
-
-
-        plt.tight_layout()
-        plt.show()
-
-        fig.savefig(weights_folder + 'Combined_Weights.pdf', dpi=600)
-
-        
-    else:
-        # log unsuccessful training details
-        model.logger.info('')
-        model.logger.info('Network training unsuccessful.')
-        model.logger.info('')
-        model.logger.info('Performance details:')
-        model.logger.info("-------------------------------------------")
-        model.logger.info('P@100R: '+str(p100r)+
-              '%  |  Query frequency: '+
-              str(round(model.number_training_images/(end-start),2))+'Hz')
-        model.logger.info('')
-    return testFlag
+# clear the contents of the weights folder if retraining with same settings
+def clear_weights(training_out):
+    if os.path.isfile(training_out + 'net.pkl'):
+        os.remove(training_out+'net.pkl')
+    if os.path.isfile(training_out + 'GT_imgnames.pkl'):
+        os.remove(training_out+'GT_imgnames.pkl')
+    if not os.path.isdir(training_out):
+        os.mkdir(training_out)
