@@ -80,8 +80,8 @@ In general, data should be organised in the following way in order to train the 
 Speicfy the datapaths by altering `self.trainingPath` and `self.testPath` in `VPRTempo.py`. You can specify which traversals you want to train and test on by also altering `self.locations` and `self.test_location`. In the case above it would be the following; 
 
 ```python
-self.trainingPath = '<path_to_data>/training/
-self.testPath = '<path_to_data>/testing/
+self.trainingPath = '<path_to_data>/training/'
+self.testPath = '<path_to_data>/testing/'
 
 self.locations = ["traversal_1","traversal_2"]
 self.test_location = "test_traversal"
