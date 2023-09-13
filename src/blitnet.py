@@ -119,8 +119,6 @@ def addLayer(net,dims,thr_range,fire_rate,ip_rate,const_inp,nois,rec_spks):
     net['spikes'].append(torch.empty([],dtype=torch.float64))
     net['rec_spks'].append(rec_spks)
 
-    return len(net['x'])-1
-
 ##################################
 # Add a set of random connections between layers
 #  net:        BITnet instance
@@ -196,8 +194,6 @@ def addWeights(net,layer_pre,layer_post,W_range,p,stdp_rate):
         nrmInh[nrmInh==0.0] = 1.0
         net['W'][excIndex][n] = net['W'][excIndex][n,:,:]/nrmExc
         net['W'][inhIndex][n] = net['W'][inhIndex][n,:,:]/nrmInh
-
-    return len(net['W'])-1
     
 ##################################
 # Normalise all the firing rates
@@ -312,9 +308,7 @@ def calc_spikes(net,layersInfo):
     for i,eta in enumerate(net['eta_ip']):
         
         if net['rec_spks'][i]:
-            outspk = (net['x'][i][0,:,:]).detach().cpu().numpy() # detach to numpy for easy plotting
-            if i == 2:
-                outspk[outspk<0.05] = 0
+            outspk = (net['x'][i][0,0,:]).detach().cpu().numpy() # detach to numpy for easy plotting
             n_idx = np.nonzero(outspk)
             net['spikes'][i].extend([net['step_num']+net['x'][i][0,:,:].detach().cpu().numpy(),n]
                                         for n in n_idx)
