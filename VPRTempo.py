@@ -58,8 +58,8 @@ class snn_model():
         '''
         self.dataset = 'nordland' # set which dataset to run network on
         self.trainingPath = '' # training datapath
-        self.testPath = '' # testing datapath
-        self.number_modules = 5 # number of module networks
+        self.testPath = ''  # testing datapath
+        self.number_modules = 1 # number of module networks
         self.number_training_images = 500 # Alter number of training images
         self.number_testing_images = 500 # Alter number of testing images
         self.locations = ["spring","fall"] # Define the datasets used in the training
@@ -488,8 +488,18 @@ class snn_model():
             
             tonump = np.append(tonump,np.reshape(net['x'][-1].cpu().numpy(),
                                        [1,1,int(self.number_training_images)]))
+            
+            # detect if no output
+            if np.all(tonump == 0):
+                # find the strongest sub-threshold input index
+                nidx = np.argmax(torch.sub(net['x_input'][-1][0,0,:],
+                                      net['thr'][-1][0,0,:]).cpu().numpy())
+                tonump[nidx] = 0.5
+            else:
+                # find the highest output spike
+                nidx = np.argmax(tonump)
+            
             gt_ind = GT_imgnames.index(self.filteredNames[t])
-            nidx = np.argmax(tonump)
 
             if gt_ind == nidx:
                 numcorrect += 1
@@ -517,6 +527,73 @@ class snn_model():
             gc.collect()
             torch.cuda.empty_cache()
 
+    def sad(self):
+
+        print('')
+        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+        print('Setting up Sum of Absolute Differences (SAD) calculations')    
+        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+        print('')
+
+        sadcorrect = 0
+
+        # load the training images
+        self.location_repeat = 1 # switch to only do SAD on one dataset traversal
+        self.fullTrainPaths = self.fullTrainPaths[1]
+        self.test_true = False # testing images preloaded, load the training ones
+        # load the training images
+        self.imgs['training'], self.ids['training'] = ut.loadImages(self.test_true,
+                                            self.fullTrainPaths,
+                                            self.filteredNames,
+                                            [self.imWidth,self.imHeight],
+                                            self.num_patches,
+                                            self.testPath,
+                                            self.test_location)
+
+        # create database tensor
+        for ndx, n in enumerate(self.imgs['training']):
+            if ndx == 0:
+                db = torch.unsqueeze(n,0)
+            else:
+                db = torch.concat((db,torch.unsqueeze(n,0)),0)
+
+        def calc_sad(query, database, const):
+
+            SAD = torch.sum(torch.abs(torch.sub((database * const), (query * const))),
+                            (1,2),keepdim=True)
+            for n in range(2):
+                SAD = torch.squeeze(SAD,-1)
+            return SAD
+
+        # calculate SAD for each image to database and count correct number
+        imgred = 1/(self.imWidth*self.imHeight)
+        sad_concat = []
+        print('Running SAD')
+
+        start = timeit.default_timer()
+        for n, q in enumerate(self.imgs['testing']):
+            pixels = torch.empty([])
+             # create 3D tensor of query images
+            for o in range(self.number_testing_images):
+                if o == 0:
+                    pixels = torch.unsqueeze(q,0)
+                else:
+                    pixels = torch.concat((pixels,torch.unsqueeze(q,0)),0)
+
+            sad_score = calc_sad(pixels, db, imgred)
+
+            best_match = np.argmin(sad_score.cpu().numpy())
+            if n == best_match:
+                sadcorrect += 1
+
+        end = timeit.default_timer()   
+        p100r = round((sadcorrect/self.number_testing_images)*100,2)
+        print('')
+        print('Sum of absolute differences P@1: '+
+              str(p100r)+'%')
+        print('Sum of absolute differences queried at '
+              +str(round(self.number_testing_images/(end-start),2))+'Hz')
+
 '''
 Run the network
 '''        
@@ -535,8 +612,9 @@ if __name__ == "__main__":
         val.validate(model) # Validates that the network trained properly
     
     # Tests the network
-    model.initialize('testing') # Initializes the testing network
+    model.initialize('testing')
     model.networktester() # Test the network
+    #model.sad()
     model.logger.info('')
     model.logger.info('VPRTempo run completed')
     model.logger.removeHandler(logging.StreamHandler()) # shut down the logger
