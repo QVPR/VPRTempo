@@ -28,18 +28,6 @@ conda create -n vprtempo -c pytorch -c nvidia python torchvision torchaudio pyto
 > **Note**
 > Install the version of PyTorch-CUDA that is compatible with your graphics card, see [Start Locally | PyTorch](https://pytorch.org/get-started/locally/) for more details.
 
-When running the code, it will automatically detect and print the device being used for the network. If your CUDA install was successful, you should expect an output like:
-
-```python
-> CUDA available: True
-> Current device is: NVIDIA GeForce RTX 2080
-```
-If CUDA was not installed correctly, the output will be:
-```python
-> CUDA available: False
-> Current device is: CPU
-```
-
 #### CPU only
 To install using the CPU only, simply install Python + dependencies.
 ```console
@@ -60,9 +48,10 @@ cd ~/VPRTempo
 ```
 
 ## Datasets
+VPRTempo was developed to be simple to train and test a variety of datasets. Please see the information below about running a test with the Nordland traversal dataset and how to organize custom datasets.
 
 ### Nordland
-VPRTempo was developed and tested using the [Nordland](https://webdiis.unizar.es/~jmfacil/pr-nordland/#download-dataset). This software will work for either the full-resolution or down-sampled datasets, however our paper details the full-resolution datasets. 
+VPRTempo was developed and tested using the [Nordland](https://webdiis.unizar.es/~jmfacil/pr-nordland/#download-dataset) traversal dataset. This software will work for either the full-resolution or down-sampled datasets, however our paper details the full-resolution datasets. 
 
 To simplify first usage, we have set the defaults in `VPRTempo.py` to train and test on a small subset of Nordland data. We recommend [downloading Nordland](https://webdiis.unizar.es/~jmfacil/pr-nordland/#download-dataset) and using the `./src/nordland.py` script to unzip and organize the images into the correct file and naming structure.
 
