@@ -251,7 +251,7 @@ def validate(model):
 # run PR and recall at N
 def match_metrics(numpconc, output_folder, number_testing_images, number_training_images, logger):
     
-    numpconc = np.array(numpconc)
+    numpconc = np.array(numpconc).T
 
     # make the output folder
     folderName = output_folder+'/similarity/'
