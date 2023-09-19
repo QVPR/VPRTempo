@@ -13,8 +13,10 @@ This repository contains code for VPRTempo, a spiking neural network that uses t
 ## License & Citation
 This repository is licensed under the [MIT License](./LICENSE)
 
-If you use our code, please cite the following paper below:
-
+If you use our code, please cite the following [paper]():
+```
+@
+```
 ## Installation and setup
 We recommend installing dependencies for VPRTempo with [Mambaforge](https://mamba.readthedocs.io/en/latest/installation.html), however `conda` may also be used. VPRTempo uses [PyTorch](https://pytorch.org/) with the capability for [CUDA](https://developer.nvidia.com/cuda-toolkit) GPU acceleration. Follow the installation instructions based on your operating system and hardware specifications.
 
