@@ -54,7 +54,7 @@ def createPR(S_in, GThard, GTsoft=None, matching='multi', n_thresh=100):
     # single-best-match or multi-match VPR
     if matching == 'single':
         # GT-values for best match per query (i.e., per column)
-        GT = GT[np.nanargmax(S, axis=1), np.arange(GT.shape[1])]
+        GT = GT[np.nanargmax(S, axis=0), np.arange(GT.shape[1])]
 
          # count the number of ground-truth positives (GTP)
         GTP = np.count_nonzero(GT)
