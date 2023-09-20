@@ -23,7 +23,7 @@ if not is_conda:
 
 # define the setup
 setup(
-    name="VPRTempo-GPU",
+    name="VPRTempo",
     version="1.0.0",
     description='VPRTempo: A Fast Temporally Encoded Spiking Neural Network for Visual Place Recognition',
     long_description=long_description,
