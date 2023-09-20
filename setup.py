@@ -1,13 +1,21 @@
+import os, sys
+
 from setuptools import setup, find_packages
 
 
 # define the base requires needed for the repo
-requirements = ['opencv-python', 
+requirements = [ 
                 'matplotlib',
                 'torch',
                 'torchvision',
                 'torchaudio',
                 ]
+
+# workaround as opencv-python does not show up in "pip list" within a conda environment
+# we do not care as conda recipe has py-opencv requirement anyhow
+is_conda = os.path.exists(os.path.join(sys.prefix, 'conda-meta'))
+if not is_conda:
+    requirements.append('opencv-python')
 
 # define the setup
 setup(
