@@ -32,7 +32,7 @@ We recommend installing dependencies for VPRTempo with [Mambaforge](https://mamb
 Use conda/mamba to create a new environment and install Python, CUDA tools, and dependencies.
 
 ```console
-conda create -n vprtempo -c pytorch -c nvidia python torchvision torchaudio pytorch-cuda=11.7 cudatools opencv matplotlib
+conda create -n vprtempo -c pytorch -c nvidia python torchvision torchaudio pytorch-cuda=11.7 cudatoolkit opencv matplotlib
 ```
 > **Note**
 > Install the version of PyTorch-CUDA that is compatible with your graphics card, see [Start Locally | PyTorch](https://pytorch.org/get-started/locally/) for more details.
