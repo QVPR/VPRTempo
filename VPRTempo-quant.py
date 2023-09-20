@@ -57,9 +57,9 @@ class snn_model():
         USER SETTINGS
         '''
         self.dataset = 'nordland' # set which dataset to run network on
-        self.trainingPath = '' # training datapath
-        self.testPath = ''  # testing datapath
-        self.number_modules = 1 # number of module networks
+        self.trainingPath = '/home/adam/data/nordland/' # training datapath
+        self.testPath = '/home/adam/data/nordland/'  # testing datapath
+        self.number_modules = 5 # number of module networks
         self.number_training_images = 500 # Alter number of training images
         self.number_testing_images = 500 # Alter number of testing images
         self.locations = ["spring","fall"] # Define the datasets used in the training
