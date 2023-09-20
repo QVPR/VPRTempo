@@ -23,11 +23,6 @@ setup(
     packages=find_packages(),
     keywords=['python', 'place recognition', 'spiking neural networks',
               'computer vision', 'robotics'],
-    scripts=['VPRTempo.py',
-             'src/blitnet.py',
-             'src/metrics.py',
-             'src/nordland.py',
-             'src/utils.py',
-             'src/validation.py'],
+    scripts=['VPRTempo.py'],
     package_data={'':['nordland_imageNames.txt','orc_imageNames.txt']}
 )
