@@ -2,10 +2,10 @@ import os, sys
 
 from setuptools import setup, find_packages
 
-here = os.path.abspath(os.path.dirname(__file__))
+#here = os.path.abspath(os.path.dirname(__file__))
 # Get the long description from the README file
-with open(os.path.join(here, 'README.md'), encoding='utf-8') as f:
-    long_description = f.read()
+#with open(os.path.join(here, 'README.md'), encoding='utf-8') as f:
+ #   long_description = f.read()
 
 # define the base requires needed for the repo
 requirements = [ 
@@ -26,8 +26,8 @@ setup(
     name="VPRTempo",
     version="1.0.1",
     description='VPRTempo: A Fast Temporally Encoded Spiking Neural Network for Visual Place Recognition',
-    long_description=long_description,
-    long_description_content_type='text/markdown',
+    #long_description=long_description,
+    #long_description_content_type='text/markdown',
     author='Adam D Hines, Peter G Stratton, Michael Milford and Tobias Fischer',
     author_email='adam.hines@qut.edu.au',
     url='https://github.com/QVPR/VPRTempo',
