@@ -24,7 +24,7 @@ if not is_conda:
 # define the setup
 setup(
     name="VPRTempo",
-    version="1.0.0",
+    version="1.0.1",
     description='VPRTempo: A Fast Temporally Encoded Spiking Neural Network for Visual Place Recognition',
     long_description=long_description,
     author='Adam D Hines, Peter G Stratton, Michael Milford and Tobias Fischer',
