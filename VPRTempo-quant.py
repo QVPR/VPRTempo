@@ -41,580 +41,209 @@ import blitnet as bn
 import utils as ut
 import validation as val
 import numpy as np
+import torch.nn as nn
+import torch.nn.functional as F
 
 from os import path
 from datetime import datetime
 
 
-'''
-Spiking network model class
-'''
-class snn_model():
-    def __init__(self):
-        super().__init__()
-        
-        '''
-        USER SETTINGS
-        '''
-        self.dataset = 'nordland' # set which dataset to run network on
-        self.trainingPath = '/home/adam/data/nordland/' # training datapath
-        self.testPath = '/home/adam/data/nordland/'  # testing datapath
-        self.number_modules = 5 # number of module networks
-        self.number_training_images = 500 # Alter number of training images
-        self.number_testing_images = 500 # Alter number of testing images
-        self.locations = ["spring","fall"] # Define the datasets used in the training
-        self.test_location = "summer" # Define the dataset is used for testing
-        self.filter = 8 # Set to number of images to filter
-        self.validation = True # Set to True to calculate PR metrics
-        
-        assert (len(self.dataset) != 0),"Dataset not defined, see README.md for details on setting up images"
-        assert (os.path.isdir(self.trainingPath)),"Training path not set or path does not exist, specify for self.trainingPath"
-        assert (os.path.isdir(self.testPath)),"Test path not set or path does not exist, specify for self.testPath"
-        assert (os.path.isdir(self.trainingPath+self.locations[0])),"Images must be organized into folders based on locations, see README.md for details"
-        assert (os.path.isdir(self.testPath+self.test_location)),"Images must be organized into folders based on locations, see README.md for details"
-        
-        '''
-        NETWORK SETTINGS
-        '''
-        # Image and patch normalization settings
-        self.imWidth = 28 # image width for resize
-        self.imHeight = 28 # image height for resize
-        self.num_patches = 7 # number of patches
-        self.intensity = 255 # divide pixel values to get spikes in range [0,1]
-        self.location_repeat = len(self.locations) # Number of training locations that are the same
-        
-        # Network and training settings
-        self.input_layer = (self.imWidth*self.imHeight) # number of input layer neurons
-        self.feature_layer = int(self.input_layer*2) # number of feature layer neurons
-        self.output_layer = int(self.number_training_images/self.number_modules) # number of output layer neurons
-        self.epoch = 4 # number of training iterations
+class SNNLayer(nn.Module):
+    def __init__(self, dims, thr_range, fire_rate, ip_rate, stdp_rate, const_inp,
+                 assign_weight):
+        super(SNNLayer, self).__init__()
+
+        # Device
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        if self.device.type == "cuda": # clear cuda cache, initialize, and syncgronize gpu
-            os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-            torch.cuda.set_device(self.device)
-            gc.collect()
-            torch.cuda.empty_cache()
-            torch.cuda.init()
-            torch.cuda.synchronize(device=self.device)
-        self.T = int((self.number_training_images/self.number_modules)
-                             *self.location_repeat) # number of training steps
-        self.annl_pow = 2 # learning rate anneal power
-        self.imgs = {'training':[],'testing':[]}
-        self.ids = {'training':[],'testing':[]}
-        self.spike_rates = {'training':[],'testing':[]}
         
-        # Hyperparamters
-        self.theta_max = 0.5 # maximum threshold value
-        self.n_init = 0.005 # initial learning rate value
-        self.n_itp = 0.15 # initial intrinsic threshold plasticity rate[[0.9999]]
-        self.f_rate = [0.2,0.9] # firing rate range
-        self.p_exc = 0.1 # probability of excitatory connection
-        self.p_inh = 0.5 # probability of inhibitory connection
-        self.c= 0.1 # constant input 
+        # Check constraints etc
+        if np.isscalar(thr_range): thr_range = [thr_range, thr_range]
+        if np.isscalar(fire_rate): fire_rate = [fire_rate, fire_rate]
+        if np.isscalar(const_inp): const_inp = [const_inp, const_inp]
         
-        # Test settings 
-        self.test_true = False # leave default to False
-    
+        # Initialize Tensors
+        self.dim = torch.tensor(dims, dtype=torch.int)
+        self.x = torch.zeros(dims, device=self.device)
+        self.x_prev = torch.zeros(dims, device=self.device)
+        self.x_calc = torch.zeros(dims, device=self.device)
+        self.x_input = torch.zeros(dims, device=self.device)
+        self.x_fastinp = torch.zeros(dims, device=self.device)
+        self.eta_ip = torch.tensor(ip_rate, device=self.device)
+        self.eta_stdp = torch.tensor(stdp_rate, device=self.device)
         
-        '''
-        DATA SETTINGS
-        '''
-        # Select training images from list
-        with open('./'+self.dataset+'_imageNames.txt') as file:
-            self.imageNames = [line.rstrip() for line in file]
-            
-        # Filter the loading images based on self.filter
-        self.filteredNames = []
-        for n in range(0,len(self.imageNames),self.filter):
-            self.filteredNames.append(self.imageNames[n])
-        del self.filteredNames[self.number_training_images:len(self.filteredNames)]
+        # Initialize Parameters
+        self.thr = nn.Parameter(torch.zeros(dims, device=self.device).uniform_(thr_range[0], thr_range[1]))
+        self.fire_rate = torch.zeros(dims, device=self.device).uniform_(fire_rate[0], fire_rate[1])
+        self.have_rate = torch.any(self.fire_rate[:,:,0] > 0.0).to(self.device)
+        self.const_inp = torch.zeros(dims, device=self.device).uniform_(const_inp[0], const_inp[1])
+        
+        # Additional State Variables
+        self.set_spks = []
+        self.sspk_idx = 0
+        self.spikes = torch.empty([], dtype=torch.float64)
+        
+        # Store the layer numbers
+        self.layers.append(len(self.layers))
+        
+        # Weights (if applicable)
+        if assign_weight:
+            self.excW, self.inhW = bn.addWeights(self.layers)
+        
+class SNNModel(nn.Module):
+    def __init__(self):
+        super(SNNModel, self).__init__()
+        # define layer parameters
+        self.number_modules = 1 # set the numnber of expert modules
+        self.module_max = 100 # set the maximum number of places per module
+        self.imWidth = 28 # set the pixel width (after pre-processing)
+        self.imHeight = 28 # set the pixel height (after pre-processing)
+        self.dim = int(self.imWidth*self.imHeight) # calculate the input layer size
+        self.layers = []
+        
+        # initialize new net 
+        self.net = bn.newNet(self.number_modules,self.dim)
+        
+        # add the layers
+        # input layer
+        self.input_layer = SNNLayer(
+            [self.number_modules,1,self.dim],
+            0,0,0,0,0,False)
+        
+        # feature layer
+        self.feature_layer = SNNLayer(
+            [self.number_modules,1,int(self.dim*2)],
+            [0,0.5],
+            [0.2,0.9],
+            0.15,
+            0.005,
+            [0,0.1],
+            True)
+        
+        # output layer
+        self.output_layer = SNNLayer(
+            [self.number_modules,1,self.module_max],
+            0,0,0,0,[0,0],True) # output layer
+        
+        
+    def forward(self):
+        # run the network to get the output here
+        bn.testSim()
+        
+def configure_model(model):
+    model.dataset = 'nordland'
+    model.trainingPath = '/home/adam/data/nordland/'
+    model.testPath = '/home/adam/data/nordland/'
+    model.number_modules = 1
+    model.number_training_images = 100
+    model.number_testing_images = 100
+    model.locations = ["spring", "fall"]
+    model.test_location = "summer"
+    model.filter = 8
+    model.validation = True
+    model.log = False
 
-        # Get the full training and testing data paths    
-        self.fullTrainPaths = []
-        for n in self.locations:
-                self.fullTrainPaths.append(self.trainingPath+n+'/')
-        
-        # create output folder
-        now = datetime.now()
-        self.output_folder = './output/'+now.strftime("%d%m%y-%H-%M-%S")
-        os.mkdir(self.output_folder)
-        
-        # setup logger
-        self.logger = logging.getLogger("VPRTempo")
-        self.logger.setLevel(logging.DEBUG)
-        logging.basicConfig(filename=self.output_folder+"/logfile.log", 
-                            filemode="a+",
-                            format="%(asctime)-15s %(levelname)-8s %(message)s")
-        self.logger.addHandler(logging.StreamHandler())
-        
-        # Print network details
-        self.logger.info('////////////')
-        self.logger.info('VPRTempo - Temporally Encoded Visual Place Recognition v1.1.0-alpha')
-        self.logger.info('Queensland University of Technology, Centre for Robotics')
-        self.logger.info('')
-        self.logger.info('© 2023 Adam D Hines, Peter G Stratton, Michael Milford, Tobias Fischer')
-        self.logger.info('MIT license - https://github.com/QVPR/VPRTempo')
-        self.logger.info('\\\\\\\\\\\\\\\\\\\\\\\\')
-        self.logger.info('')
-        self.logger.info('CUDA available: '+str(torch.cuda.is_available()))
-        if torch.cuda.is_available() == True:
-            current_device = torch.cuda.current_device()
-            self.logger.info('Current device is: '+str(torch.cuda.get_device_name(current_device)))
-        else:
-            self.logger.info('Current device is: CPU')
-        self.logger.info('')
-        self.logger.info("~~ Hyperparameters ~~")
-        self.logger.info('')
-        self.logger.info('Firing threshold max: '+str(self.theta_max))
-        self.logger.info('Initial STDP learning rate: '+str(self.n_init))
-        self.logger.info('Intrinsic threshold plasticity learning rate: '+str(self.n_itp))
-        self.logger.info('Firing rate range: ['+str(self.f_rate[0])+', '+str(self.f_rate[1])+']')
-        self.logger.info('Excitatory connection probability: '+str(self.p_exc))
-        self.logger.info('Inhibitory connection probability: '+str(self.p_inh))
-        self.logger.info('Constant input: '+str(self.c))
-        self.logger.info('')
-        self.logger.info("~~ Training and testing conditions ~~")
-        self.logger.info('')
-        self.logger.info('Number of training images: '+str(self.number_training_images))
-        self.logger.info('Number of testing images: '+str(self.number_testing_images))
-        self.logger.info('Number of training epochs: '+str(self.epoch))
-        self.logger.info('Number of modules: '+str(self.number_modules))
-        self.logger.info('Dataset used: '+str(self.dataset))
-        self.logger.info('Training locations: '+str(self.locations))
-        self.logger.info('Testing location: '+str(self.test_location))
-
-        # Network weights name
-        self.training_out = './weights/'+str(self.input_layer)+'i'+\
-                                            str(self.feature_layer)+\
-                                        'f'+str(self.output_layer)+\
-                                            'o'+str(self.epoch)+'/'
-        
-        
-    # Check if pre-trained network exists, prompt if retrain or run        
-    def checkTrainTest(self):
-        prompt = "A network with these parameters exists, re-train network? (y/n):\n"
-        self.logger.info('')
-        if path.isdir(self.training_out):
-            retrain = input(prompt)
-        else:
-            retrain = 'y'
-        return retrain
-    
-    def initialize(self,condition):
-        
-        '''
-        Network startup and initialization
-        '''
-        self.logger.info('')
-        self.logger.info('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        self.logger.info(condition+' startup and initialization')    
-        self.logger.info('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        self.logger.info('')
-        self.logger.info('Loading '+condition+' images')
-        
-        if condition == 'testing':
-            self.test_true = True
-            del self.filteredNames[self.number_testing_images:len(self.filteredNames)]
-            self.epoch = 1 # Only run the network once
-            self.location_repeat = 1 # One location repeat for testing
-            imgNum = self.number_testing_images
-        else:
-            imgNum = self.number_training_images
-            
-        # load the training images
-        self.imgs[condition], self.ids[condition] = ut.loadImages(self.test_true,
-                                            self.fullTrainPaths,
-                                            self.filteredNames,
-                                            [self.imWidth,self.imHeight],
-                                            self.num_patches,
-                                            self.testPath,
-                                            self.test_location)
-
-        self.spike_rates[condition] = ut.setSpikeRates(self.imgs[condition],
-                                           self.ids[condition],
-                                            self.device,
-                                            [self.imWidth,self.imHeight],
-                                            self.test_true,
-                                            imgNum,
-                                            self.number_modules,
-                                            self.intensity,
-                                            self.location_repeat)
+    assert (len(model.dataset) != 0), "Dataset not defined, see README.md for details on setting up images"
+    assert (os.path.isdir(model.trainingPath)), "Training path not set or path does not exist, specify for model.trainingPath"
+    assert (os.path.isdir(model.testPath)), "Test path not set or path does not exist, specify for model.testPath"
+    assert (os.path.isdir(model.trainingPath + model.locations[0])), "Images must be organized into folders based on locations, see README.md for details"
+    assert (os.path.isdir(model.testPath + model.test_location)), "Images must be organized into folders based on locations, see README.md for details"
     
     '''
-    Run the training network
+    NETWORK SETTINGS
     '''
-    def train(self):
-
-        # remove contents of the weights folder
-        ut.clear_weights(self.training_out)
-
-        # create a new blitnet netowrk
-        self.logger.info('Creating network and setting weights')
-        net = bn.newNet(self.number_modules,self.imWidth*self.imHeight)
-        
-        # add the input layer
-        bn.addLayer(net,[self.number_modules,1,self.input_layer],
-                             0.0,0.0,0.0,0.0,0.0,False)   
-        
-        # add the feature layer
-        bn.addLayer(net,[self.number_modules,1,self.feature_layer],
-                        [0,self.theta_max],
-                        [self.f_rate[0],self.f_rate[1]],
-                         self.n_itp,
-                        [0,self.c],
-                         0,
-                         False)
-        
-        # sequentially set the feature firing rates for the feature layer
-        fstep = (self.f_rate[1]-self.f_rate[0])/self.feature_layer
-        
-        # loop through all modules and feature layer neurons
-        for x in range(self.number_modules):
-            for i in range(self.feature_layer):
-                net['fire_rate'][1][x][:,i] = self.f_rate[0]+fstep*(i+1)
-            
-        # add excitatory inhibitory connections for input and feature layer
-        bn.addWeights(net,0,1,[-1,0,1],[self.p_exc,self.p_inh],self.n_init)
-        self.init_weights = [net['W'][0].clone().detach(),net['W'][1].clone().detach()]
-
-        '''
-        Feature layer training
-        '''
-        self.logger.info('')
-        self.logger.info('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        self.logger.info('Training the input to feature layer')    
-        self.logger.info('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        self.logger.info('')
-        
-        self.logger.info('Setting spike rates from loaded images')
-        
-        # begin timer for network training
-        start = timeit.default_timer()
-        
-        # Set the spikes times for the input images
-        net['set_spks'][0] = torch.clone(self.spike_rates['training'])
-        self.spike_rates['training'] = []
-        if self.device == 'cuda':
-            torch.cuda.empty_cache()
-            gc.collect()    
-        layers = [len(net['W'])-2, len(net['W'])-1, len(net['W_lyr'])-1]
-        
-        # Train the input to feature layer for specified amount of epochs
-        for epoch in range(self.epoch):
-            net['step_num'] = 0
-            epochStart = timeit.default_timer()
-            
-            # loop through each image and train the network
-            for t in range(int(self.T)):
-                bn.runSim(net,1,self.device,layers)
-                # anneal learning rates
-                if np.mod(t,10)==0:
-                    pt = pow(float(self.T-t)/self.T,self.annl_pow)
-                    net['eta_ip'][1] = self.n_itp*pt
-                    net['eta_stdp'][0] = self.n_init*pt
-                    net['eta_stdp'][1] = -1*self.n_init*pt
-            
-            # print training details
-            self.logger.info('Epoch '+str(epoch+1)+' trained in: '
-                  +str(round(timeit.default_timer()-epochStart,2))+'s')
-            self.logger.info('')
-            
-        self.logger.info('Finished training input to feature layer')
-        
-        '''
-        Preparations for feature to output layer training
-        '''
-        
-        # Turn off learning between input and feature layer
-        net['eta_ip'][1] = 0.0
-        if self.p_exc > 0.0: net['eta_stdp'][0] = 0.0
-        if self.p_inh > 0.0: net['eta_stdp'][1] = 0.0
-        
-        self.logger.info('Getting feature layer spikes for output layer training')
-
-        # get the feature spikes for training the output layer
-        net['x_feat'] = []
-        net['step_num'] = 0
-        for t in range(int(self.T)): # run blitnet without learning to get feature spikes
-            bn.runSim(net,1,self.device,layers)
-            net['x_feat'].append(net['x'][1]) # dictionary output of feature spikes
-            
-        # delete input spikes
-        net['set_spks'][0] = []
-        if self.device == 'cuda':
-            torch.cuda.empty_cache()
-            gc.collect()
-        
-        self.logger.info('Creating output layer')    
-        # Create and train the output layer with the feature layer
-        bn.addLayer(net,[self.number_modules,1,self.output_layer],
-                    0.0,0.0,0.0,0.0,0.0,False)
-
-        # Add excitatory and inhibitory connections
-        bn.addWeights(net,1,2,[-1.0,0.0,1.0],[1.0,1.0],self.n_init)
-        self.init_weights.append(net['W'][2].clone().detach())
-        self.init_weights.append(net['W'][3].clone().detach())
-        
-        # Output spikes for spike forcing (final layer)
-        out_spks = torch.tensor([0],device=self.device,dtype=float)
-
-        '''
-        Output layer training
-        '''
-        self.logger.info('')
-        self.logger.info('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        self.logger.info('Training the feature to output layer')    
-        self.logger.info('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        self.logger.info('')
-        
-        net['spike_dims'] = 1 # change spike dims for output spike indexing
-        net['set_spks'][0] = [] # remove input spikes
-        layers = [len(net['W'])-2, len(net['W'])-1, len(net['W_lyr'])-1]
-        
-        # Train the feature to output layer for specified number of epochs 
-        for epoch in range(self.epoch):
-            net['step_num'] = 0
-            epochStart = timeit.default_timer()
-            
-            # Loop through all the spikes generated in the feature layer to train output
-            for t in range(self.T):
-                out_spks = torch.tensor([0],device=self.device,dtype=float)
-
-                net['set_spks'][-1] = torch.tile(out_spks,
-                                                 (self.number_modules,
-                                                  1,
-                                                  self.output_layer))
-                net['x'][1] = net['x_feat'][t]
-                bn.runSim(net,1,self.device,layers)
-                # Anneal learning rates
-                if np.mod(t,10)==0:
-                    pt = pow(float(self.T-t)/(self.T),self.annl_pow)
-                    net['eta_ip'][2] = self.n_itp*pt
-                    net['eta_stdp'][2] = self.n_init*pt
-                    net['eta_stdp'][3] = -1*self.n_init*pt
-                if np.mod((t+1),(int(self.T/self.location_repeat))) == 0:
-                    net['step_num'] = 0     
-            
-            # print training details
-            self.logger.info('Epoch '+str(epoch+1)+' trained in: '
-                  +str(round(timeit.default_timer()-epochStart,2))+'s')
-            self.logger.info('')
-            
-        self.logger.info('Finished training feature to output layer')
-        self.logger.info('')
-        self.logger.info('~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        self.logger.info('Network trained in '+str(round(timeit.default_timer()-start,2))
-                                              +'s')
-        self.logger.info('~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        self.logger.info('')
-        
-        # Turn off learning
-        net['eta_ip'][2] = 0.0
-        net['eta_stdp'][2] = 0.0
-        net['eta_stdp'][3] = 0.0
-
-        # Clear the network output spikes
-        net['set_spks'][-1] = []
-        net['spike_dims'] = self.input_layer
-        
-        # Reset network details
-        net['sspk_idx'] = [0,0,0]
-        net['step_num'] = 0
-        net['spikes'] = [[],[],[]]
-        net['x'] = [[],[],[]]
-        net['x_feat'] = []
-        
-            
-        self.logger.info('Network formatting and saving...') 
-        
-        # Output the trained network
-        outputPkl = self.training_out + 'net.pkl'
-        with open(outputPkl, 'wb') as f:
-            pickle.dump(net, f)
-            
-        # output the ground truth image names for later testing
-        outputPkl = self.training_out + 'GT_imgnames.pkl'
-        with open(outputPkl, 'wb') as f:
-            pickle.dump(self.filteredNames, f)
-        
-        self.logger.info('Network succesfully saved!')
-        
-        # if using cuda, clear and dump the memory usage
-        if self.device =='cuda':
-            del net
-            del self.spike_rates
-            del self.imgs
-            torch.cuda.empty_cache()
-            gc.collect()
+    model.num_patches = 7
+    model.intensity = 255
+    model.location_repeat = len(model.locations)
+    
+    model.epoch = 4
+    model.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    if model.device.type == "cuda":
+        os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+        torch.cuda.set_device(model.device)
+        gc.collect()
+        torch.cuda.empty_cache()
+        torch.cuda.init()
+        torch.cuda.synchronize(device=model.device)
+    model.T = int((model.number_training_images / model.number_modules) * model.location_repeat)
+    model.annl_pow = 2
+    model.imgs = {'training': [], 'testing': []}
+    model.ids = {'training': [], 'testing': []}
+    model.spike_rates = {'training': [], 'testing': []}
+    
+    model.n_itp = 0.15
+    
+    model.test_true = False
 
     '''
-     Run the testing network
+    DATA SETTINGS
     '''
-    def networktester(self):
-         
-        '''
-        Network startup and initialization
-        '''
-
-        # unpickle the network
-        self.logger.info('Unpickling the network')
-        with open(self.training_out+'net.pkl', 'rb') as f:
-             net = pickle.load(f)
+    with open('./' + model.dataset + '_imageNames.txt') as file:
+        model.imageNames = [line.rstrip() for line in file]
         
-        self.logger.info('Setting spike rates from loaded images')
-        # calculate input spikes from training images
-        
-        net['set_spks'][0] = self.spike_rates['testing']
-        
-        # unpickle the ground truth image names
-        with open(self.training_out+'GT_imgnames.pkl', 'rb') as f:
-             GT_imgnames = pickle.load(f)
-        
-        self.logger.info('')
-        self.logger.info('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        self.logger.info('Running test network')    
-        self.logger.info('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        self.logger.info('')
-        
-        # set number of correct places to 0
-        numcorrect = 0
-        net['spike_dims'] = self.input_layer
-        numpconc = []
-        start = timeit.default_timer()
-        for t in range(self.number_testing_images):
-            tonump = np.array([])
-            bn.testSim(net,device=self.device)
-            # output the index of highest amplitude spike
-            
-            tonump = np.append(tonump,np.reshape(net['x'][-1].cpu().numpy(),
-                                       [1,1,int(self.number_training_images)]))
-            
-            # detect if no output
-            if np.all(tonump == 0):
-                # find the strongest sub-threshold input index
-                nidx = np.argmax(torch.sub(net['x_input'][-1][0,0,:],
-                                      net['thr'][-1][0,0,:]).cpu().numpy())
-                tonump[nidx] = 0.5
-            else:
-                # find the highest output spike
-                nidx = np.argmax(tonump)
-            
-            gt_ind = GT_imgnames.index(self.filteredNames[t])
+    model.filteredNames = []
+    for n in range(0, len(model.imageNames), model.filter):
+        model.filteredNames.append(model.imageNames[n])
+    del model.filteredNames[model.number_training_images:len(model.filteredNames)]
+    
+    model.fullTrainPaths = []
+    for n in model.locations:
+        model.fullTrainPaths.append(model.trainingPath + n + '/')
+    
+    now = datetime.now()
+    model.output_folder = './output/' + now.strftime("%d%m%y-%H-%M-%S")
+    os.mkdir(model.output_folder)
+    
+    model.logger = logging.getLogger("VPRTempo")
+    model.logger.setLevel(logging.DEBUG)
+    logging.basicConfig(filename=model.output_folder + "/logfile.log",
+                        filemode="a+",
+                        format="%(asctime)-15s %(levelname)-8s %(message)s")
+    if model.log:
+        model.logger.addHandler(logging.StreamHandler())
+    
+    model.logger.info('////////////')
+    model.logger.info('VPRTempo - Temporally Encoded Visual Place Recognition v1.1.0-alpha')
+    model.logger.info('Queensland University of Technology, Centre for Robotics')
+    model.logger.info('')
+    model.logger.info('© 2023 Adam D Hines, Peter G Stratton, Michael Milford, Tobias Fischer')
+    model.logger.info('MIT license - https://github.com/QVPR/VPRTempo')
+    model.logger.info('\\\\\\\\\\\\\\\\\\\\\\\\')
+    model.logger.info('')
+    model.logger.info('CUDA available: ' + str(torch.cuda.is_available()))
+    if torch.cuda.is_available():
+        current_device = torch.cuda.current_device()
+        model.logger.info('Current device is: ' + str(torch.cuda.get_device_name(current_device)))
+    else:
+        model.logger.info('Current device is: CPU')
+    model.logger.info('')
+    model.logger.info("~~ Hyperparameters ~~")
+    model.logger.info('')
+    model.logger.info('Firing threshold max: ' + str(model.theta_max))
+    model.logger.info('Initial STDP learning rate: ' + str(model.n_init))
+    model.logger.info('Intrinsic threshold plasticity learning rate: ' + str(model.n_itp))
+    model.logger.info('Firing rate range: [' + str(model.f_rate[0]) + ', ' + str(model.f_rate[1]) + ']')
+    model.logger.info('Excitatory connection probability: ' + str(model.p_exc))
+    model.logger.info('Inhibitory connection probability: ' + str(model.p_inh))
+    model.logger.info('Constant input: ' + str(model.c))
+    model.logger.info('')
+    model.logger.info("~~ Training and testing conditions ~~")
+    model.logger.info('')
+    model.logger.info('Number of training images: ' + str(model.number_training_images))
+    model.logger.info('Number of testing images: ' + str(model.number_testing_images))
+    model.logger.info('Number of training epochs: ' + str(model.epoch))
+    model.logger.info('Number of modules: ' + str(model.number_modules))
+    model.logger.info('Dataset used: ' + str(model.dataset))
+    model.logger.info('Training locations: ' + str(model.locations))
+    model.logger.info('Testing location: ' + str(model.test_location))
 
-            if gt_ind == nidx:
-                numcorrect += 1
-            
-            if self.validation: # get similarity matrix for PR curve generation
-               numpconc.append(tonump.tolist())
-        
-        self.p100r = round((numcorrect/self.number_testing_images)*100,2)
-        self.logger.info('Number of correct matches P@100R - '+str(self.p100r)+'%')
+    model.training_out = './weights/' + str(model.input_layer) + 'i' + str(model.feature_layer) + 'f' + str(model.output_layer) + 'o' + str(model.epoch) + '/'
 
-        end = timeit.default_timer()
-        queryHertz = self.number_testing_images/(end-start)
-        self.logger.info('System queried at '+str(round(queryHertz,2))+'Hz')
-        
-        # if self.validation = True, get PR information and plot similarity matrix
-        if self.validation:
-            val.match_metrics(numpconc, 
-                              self.output_folder, 
-                              self.number_testing_images, 
-                              self.number_training_images, 
-                              self.logger)
-
-        # if using cuda, clear and dump the memory usage
-        if self.device =='cuda':
-            gc.collect()
-            torch.cuda.empty_cache()
-
-    def sad(self):
-
-        print('')
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print('Setting up Sum of Absolute Differences (SAD) calculations')    
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print('')
-
-        sadcorrect = 0
-
-        # load the training images
-        self.location_repeat = 1 # switch to only do SAD on one dataset traversal
-        self.fullTrainPaths = self.fullTrainPaths[1]
-        self.test_true = False # testing images preloaded, load the training ones
-        # load the training images
-        self.imgs['training'], self.ids['training'] = ut.loadImages(self.test_true,
-                                            self.fullTrainPaths,
-                                            self.filteredNames,
-                                            [self.imWidth,self.imHeight],
-                                            self.num_patches,
-                                            self.testPath,
-                                            self.test_location)
-
-        # create database tensor
-        for ndx, n in enumerate(self.imgs['training']):
-            if ndx == 0:
-                db = torch.unsqueeze(n,0)
-            else:
-                db = torch.concat((db,torch.unsqueeze(n,0)),0)
-
-        def calc_sad(query, database, const):
-
-            SAD = torch.sum(torch.abs(torch.sub((database * const), (query * const))),
-                            (1,2),keepdim=True)
-            for n in range(2):
-                SAD = torch.squeeze(SAD,-1)
-            return SAD
-
-        # calculate SAD for each image to database and count correct number
-        imgred = 1/(self.imWidth*self.imHeight)
-        sad_concat = []
-        print('Running SAD')
-
-        start = timeit.default_timer()
-        for n, q in enumerate(self.imgs['testing']):
-            pixels = torch.empty([])
-             # create 3D tensor of query images
-            for o in range(self.number_testing_images):
-                if o == 0:
-                    pixels = torch.unsqueeze(q,0)
-                else:
-                    pixels = torch.concat((pixels,torch.unsqueeze(q,0)),0)
-
-            sad_score = calc_sad(pixels, db, imgred)
-
-            best_match = np.argmin(sad_score.cpu().numpy())
-            if n == best_match:
-                sadcorrect += 1
-
-        end = timeit.default_timer()   
-        p100r = round((sadcorrect/self.number_testing_images)*100,2)
-        print('')
-        print('Sum of absolute differences P@1: '+
-              str(p100r)+'%')
-        print('Sum of absolute differences queried at '
-              +str(round(self.number_testing_images/(end-start),2))+'Hz')
-
-'''
-Run the network
-'''        
+      
 if __name__ == "__main__":
     
     # Instantiate model
-    model = snn_model()
+    model = SNNModel()
+    configure_model(model)
     
-    # check if the network has already been trained previously
-    flg = model.checkTrainTest()
+    model.forward()
     
-    # if user inputs 'y' to retrain network if network doesn't exist
-    if flg == 'y':
-        model.initialize('training') # Initializes the training network
-        model.train() # Run network training (will check if already trained)
-        val.validate(model) # Validates that the network trained properly
-    
-    # Tests the network
-    model.initialize('testing')
-    model.networktester() # Test the network
-    #model.sad()
-    model.logger.info('')
-    model.logger.info('VPRTempo run completed')
-    model.logger.removeHandler(logging.StreamHandler()) # shut down the logger
