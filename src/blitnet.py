@@ -28,6 +28,8 @@ import pdb
 import torch
 
 import matplotlib.pyplot as plt
+import torch.quantization as tq
+import torch.nn as nn
 
 
 ##################################
@@ -71,7 +73,7 @@ def newNet(modules, dims):
                fire_rate=[],have_rate=[],mean_rate=[],eta_ip=[],const_inp=[],nois=[],
                set_spks=[],sspk_idx=[],spikes=[],rec_spks=[],
                W=[],I=[],is_inhib=[],W_lyr=[],eta_stdp=[],
-               step_num=0, num_modules = modules, spike_dims = dims)
+               step_num=0)
     
     return net
 
@@ -194,6 +196,8 @@ def addWeights(net,layer_pre,layer_post,W_range,p,stdp_rate):
         nrmInh[nrmInh==0.0] = 1.0
         net['W'][excIndex][n] = net['W'][excIndex][n,:,:]/nrmExc
         net['W'][inhIndex][n] = net['W'][inhIndex][n,:,:]/nrmInh
+        
+        return net['W'][excIndex], net['W'][]
     
 ##################################
 # Normalise all the firing rates
@@ -441,5 +445,47 @@ def plotSpikes(net,cutoff):
     plt.figure()
     subplotSpikes(net,cutoff)
     plt.show(block=False)
+    
+# apply QAT once training is done
+def QAT(net):
+    
+    # Initialize an empty dictionary to hold the CPU tensors
+    cpu_dict = {}
+    
+
+    # Iterate over the items in the original dictionary
+    for key, value in net.items():
+        # If the value associated with the key is a list
+        if isinstance(value, list):
+            # Initialize an empty list to hold the converted tensors
+            converted_list = []
+            # Iterate over the list elements
+            for elem in value:
+                # Check if the element is a tensor
+                if isinstance(elem, torch.Tensor):
+                    # If it is a tensor, move it to CPU
+                    converted_list.append(elem.cpu())
+                else:
+                    # If it is not a tensor, keep it as it is
+                    converted_list.append(elem)
+            cpu_dict[key] = converted_list
+        # If the value is a single tensor
+        elif isinstance(value, torch.Tensor):
+            cpu_dict[key] = value.cpu()
+        # If the value is neither a list nor a tensor, keep it as it is
+        else:
+            cpu_dict[key] = value
+    weight_qconfig = tq.QConfig(
+    activation=tq.FakeQuantize.with_args(observer=tq.MinMaxObserver,
+                                         dtype=torch.qint8),
+                                        weight=tq.FakeQuantize.with_args(observer=tq.MinMaxObserver, 
+                                        dtype=torch.quint8))   
+    
+    fake_quant_weight = tq.FakeQuantize(observer=tq.MinMaxObserver, 
+                                        quant_min=0, 
+                                        quant_max=255, 
+                                        dtype=torch.quint8)
+    fake_quant_weight(cpu_dict['W'][0])
+
     
 ##################################
