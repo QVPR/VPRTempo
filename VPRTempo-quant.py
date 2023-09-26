@@ -24,13 +24,9 @@
 Imports
 '''
 
-import pickle
 import os
 import torch
-import gc
-import timeit
 
-import logging
 import sys
 sys.path.append('./src')
 sys.path.append('./weights')
@@ -38,19 +34,16 @@ sys.path.append('./settings')
 sys.path.append('./output')
 
 import blitnet as bn
-import utils as ut
-import validation as val
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 
-from os import path
-from datetime import datetime
+from config import configure
 
 
 class SNNLayer(nn.Module):
-    def __init__(self, dims, thr_range, fire_rate, ip_rate, stdp_rate, const_inp,
-                 assign_weight):
+    def __init__(self, dims=[0,0,0], thr_range=[0,0], fire_rate=[0,0], 
+                 ip_rate=0, stdp_rate=0, const_inp=[0,0],assign_weight=False):
         super(SNNLayer, self).__init__()
 
         # Device
@@ -89,161 +82,91 @@ class SNNLayer(nn.Module):
         if assign_weight:
             self.excW, self.inhW = bn.addWeights(self.layers)
         
+class SNNTrainer:
+    def __init__(self, train_dataset, val_dataset, model_path):
+        
+        # Configure the network
+        configure(self) 
+        
+        self.train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+        self.val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
+        self.model_path = model_path
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        
+        self.model = SNNModel().to(self.device)
+        self.criterion = torch.nn.CrossEntropyLoss()  # Replace with appropriate loss function
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)  # Adjust learning rate
+        
+        # Set up the input layer
+        self.input_layer = SNNLayer(dims=[self.number_modules,1,self.input])
+        
+        # Set up the feature layer
+        self.feature_layer = SNNLayer(dims=[self.number_modules,1,self.feature],
+                                      thr_range=[0,0.5],
+                                      fire_rate=[0.2,0.9],
+                                      ip_rate=0.15,
+                                      stdp_rate=0.005,
+                                      const_inp=[0,0.1],
+                                      assign_weight=True)
+        
+        # Set up the output layer
+        self.output_layer = SNNLayer(dims=[self.number_modules,1,self.output],
+                                     assign_weight=True)
+    
+    def train_model(self, num_epochs=50):
+        for epoch in range(num_epochs):
+            self.model.train()
+            running_loss = 0.0
+            for inputs, targets in self.train_loader:
+                inputs, targets = inputs.to(self.device), targets.to(self.device)
+                
+                self.optimizer.zero_grad()
+                
+                outputs = self.model(inputs)
+                loss = self.criterion(outputs, targets)
+                
+                loss.backward()
+                self.optimizer.step()
+                
+                running_loss += loss.item() * inputs.size(0)
+                
+            epoch_loss = running_loss / len(self.train_loader.dataset)
+            print(f"Epoch {epoch}/{num_epochs}, Loss: {epoch_loss}")
+            
+            # TODO: Add validation loop here
+        
+        torch.save(self.model.state_dict(), self.model_path)
+        print(f"Model saved at {self.model_path}")
+        
+    def load_or_train_model(self):
+        if os.path.exists(self.model_path):
+            print(f"Loading model from {self.model_path}")
+            self.model.load_state_dict(torch.load(self.model_path))
+        else:
+            print("Model not found, starting training.")
+            self.train_model()
+
 class SNNModel(nn.Module):
     def __init__(self):
         super(SNNModel, self).__init__()
-        # define layer parameters
-        self.number_modules = 1 # set the numnber of expert modules
-        self.module_max = 100 # set the maximum number of places per module
-        self.imWidth = 28 # set the pixel width (after pre-processing)
-        self.imHeight = 28 # set the pixel height (after pre-processing)
-        self.dim = int(self.imWidth*self.imHeight) # calculate the input layer size
-        self.layers = []
         
-        # initialize new net 
-        self.net = bn.newNet(self.number_modules,self.dim)
+        # Configure the network
+        configure(self) 
         
-        # add the layers
-        # input layer
-        self.input_layer = SNNLayer(
-            [self.number_modules,1,self.dim],
-            0,0,0,0,0,False)
-        
-        # feature layer
-        self.feature_layer = SNNLayer(
-            [self.number_modules,1,int(self.dim*2)],
-            [0,0.5],
-            [0.2,0.9],
-            0.15,
-            0.005,
-            [0,0.1],
-            True)
-        
-        # output layer
-        self.output_layer = SNNLayer(
-            [self.number_modules,1,self.module_max],
-            0,0,0,0,[0,0],True) # output layer
-        
-        
-    def forward(self):
-        # run the network to get the output here
-        bn.testSim()
-        
-def configure_model(model):
-    model.dataset = 'nordland'
-    model.trainingPath = '/home/adam/data/nordland/'
-    model.testPath = '/home/adam/data/nordland/'
-    model.number_modules = 1
-    model.number_training_images = 100
-    model.number_testing_images = 100
-    model.locations = ["spring", "fall"]
-    model.test_location = "summer"
-    model.filter = 8
-    model.validation = True
-    model.log = False
+    def forward(self, x):
+        # Define the forward pass to transform the input x to an output
+        # TODO: Replace with actual forward pass code
+        out = bn.testSim(self)  # Assuming testSim is a function that can perform the forward pass
+        return out
 
-    assert (len(model.dataset) != 0), "Dataset not defined, see README.md for details on setting up images"
-    assert (os.path.isdir(model.trainingPath)), "Training path not set or path does not exist, specify for model.trainingPath"
-    assert (os.path.isdir(model.testPath)), "Test path not set or path does not exist, specify for model.testPath"
-    assert (os.path.isdir(model.trainingPath + model.locations[0])), "Images must be organized into folders based on locations, see README.md for details"
-    assert (os.path.isdir(model.testPath + model.test_location)), "Images must be organized into folders based on locations, see README.md for details"
-    
-    '''
-    NETWORK SETTINGS
-    '''
-    model.num_patches = 7
-    model.intensity = 255
-    model.location_repeat = len(model.locations)
-    
-    model.epoch = 4
-    model.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    if model.device.type == "cuda":
-        os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-        torch.cuda.set_device(model.device)
-        gc.collect()
-        torch.cuda.empty_cache()
-        torch.cuda.init()
-        torch.cuda.synchronize(device=model.device)
-    model.T = int((model.number_training_images / model.number_modules) * model.location_repeat)
-    model.annl_pow = 2
-    model.imgs = {'training': [], 'testing': []}
-    model.ids = {'training': [], 'testing': []}
-    model.spike_rates = {'training': [], 'testing': []}
-    
-    model.n_itp = 0.15
-    
-    model.test_true = False
 
-    '''
-    DATA SETTINGS
-    '''
-    with open('./' + model.dataset + '_imageNames.txt') as file:
-        model.imageNames = [line.rstrip() for line in file]
-        
-    model.filteredNames = []
-    for n in range(0, len(model.imageNames), model.filter):
-        model.filteredNames.append(model.imageNames[n])
-    del model.filteredNames[model.number_training_images:len(model.filteredNames)]
-    
-    model.fullTrainPaths = []
-    for n in model.locations:
-        model.fullTrainPaths.append(model.trainingPath + n + '/')
-    
-    now = datetime.now()
-    model.output_folder = './output/' + now.strftime("%d%m%y-%H-%M-%S")
-    os.mkdir(model.output_folder)
-    
-    model.logger = logging.getLogger("VPRTempo")
-    model.logger.setLevel(logging.DEBUG)
-    logging.basicConfig(filename=model.output_folder + "/logfile.log",
-                        filemode="a+",
-                        format="%(asctime)-15s %(levelname)-8s %(message)s")
-    if model.log:
-        model.logger.addHandler(logging.StreamHandler())
-    
-    model.logger.info('////////////')
-    model.logger.info('VPRTempo - Temporally Encoded Visual Place Recognition v1.1.0-alpha')
-    model.logger.info('Queensland University of Technology, Centre for Robotics')
-    model.logger.info('')
-    model.logger.info('© 2023 Adam D Hines, Peter G Stratton, Michael Milford, Tobias Fischer')
-    model.logger.info('MIT license - https://github.com/QVPR/VPRTempo')
-    model.logger.info('\\\\\\\\\\\\\\\\\\\\\\\\')
-    model.logger.info('')
-    model.logger.info('CUDA available: ' + str(torch.cuda.is_available()))
-    if torch.cuda.is_available():
-        current_device = torch.cuda.current_device()
-        model.logger.info('Current device is: ' + str(torch.cuda.get_device_name(current_device)))
-    else:
-        model.logger.info('Current device is: CPU')
-    model.logger.info('')
-    model.logger.info("~~ Hyperparameters ~~")
-    model.logger.info('')
-    model.logger.info('Firing threshold max: ' + str(model.theta_max))
-    model.logger.info('Initial STDP learning rate: ' + str(model.n_init))
-    model.logger.info('Intrinsic threshold plasticity learning rate: ' + str(model.n_itp))
-    model.logger.info('Firing rate range: [' + str(model.f_rate[0]) + ', ' + str(model.f_rate[1]) + ']')
-    model.logger.info('Excitatory connection probability: ' + str(model.p_exc))
-    model.logger.info('Inhibitory connection probability: ' + str(model.p_inh))
-    model.logger.info('Constant input: ' + str(model.c))
-    model.logger.info('')
-    model.logger.info("~~ Training and testing conditions ~~")
-    model.logger.info('')
-    model.logger.info('Number of training images: ' + str(model.number_training_images))
-    model.logger.info('Number of testing images: ' + str(model.number_testing_images))
-    model.logger.info('Number of training epochs: ' + str(model.epoch))
-    model.logger.info('Number of modules: ' + str(model.number_modules))
-    model.logger.info('Dataset used: ' + str(model.dataset))
-    model.logger.info('Training locations: ' + str(model.locations))
-    model.logger.info('Testing location: ' + str(model.test_location))
-
-    model.training_out = './weights/' + str(model.input_layer) + 'i' + str(model.feature_layer) + 'f' + str(model.output_layer) + 'o' + str(model.epoch) + '/'
-
-      
+# Testing the model:
 if __name__ == "__main__":
-    
-    # Instantiate model
     model = SNNModel()
-    configure_model(model)
+    test_dataset = ... # TODO: Load your test dataset here
     
-    model.forward()
-    
+    model.eval()  # Set the model to evaluation mode
+    with torch.no_grad():  # Disable gradient computation during testing
+        for inputs, targets in test_dataset:
+            outputs = model(inputs)  # This calls the forward method and gets the model’s outputs
+            # TODO: Compute your evaluation metric(s) by comparing outputs to targets
