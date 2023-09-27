@@ -123,14 +123,12 @@ def addLayer(net,dims,thr_range,fire_rate,ip_rate,const_inp,nois,rec_spks):
 
 ##################################
 # Add a set of random connections between layers
-#  net:        BITnet instance
-#  layer_pre:  presynaptic layer
-#  layer_post: postsynaptic layer
 #  W_range:    weight range [lo,hi]
 #  p:          initial connection probability
 #  stdp_rate:  STDP rate (0=no STDP)
 
-def addWeights(net,layer_pre,layer_post,W_range,p,stdp_rate):
+def addWeights(W_range=[-1,0,1],p=[1,1],stdp_rate=0.001,dims=None,
+               num_modules=1):
 
     # get torch device
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")    
@@ -139,8 +137,8 @@ def addWeights(net,layer_pre,layer_post,W_range,p,stdp_rate):
     if np.isscalar(W_range): W_range = [W_range,W_range]
     
     # determine dimensions of the weight matrices
-    nrow =net['x'][layer_pre].size(dim=2)
-    ncol = net['x'][layer_post].size(dim=2)
+    nrow = dims[0]
+    ncol = dims[1]
     
     # calculate mean and std for normal distributions
     inWmn = (W_range[0]+W_range[1])/2.0
@@ -148,56 +146,52 @@ def addWeights(net,layer_pre,layer_post,W_range,p,stdp_rate):
     exWmn = (W_range[1]+W_range[2])/2.0
     exWsd = (W_range[2]-W_range[1])/6.0
     
-    # loop through modules and add excitatory and inhibitory weights
-    for n in range(net['num_modules']):
-        if n == 0: # first weights to be appended
-            net['W'].append(torch.empty(nrow,ncol,device=device).normal_(mean=exWmn,std=exWsd)) # excitatory weights
-            excIndex = len(net['W']) - 1
-            net['W'][excIndex] = torch.unsqueeze(net['W'][excIndex],0)
-            net['W'].append(torch.empty(nrow,ncol,device=device).normal_(mean=inWmn,std=inWsd)) # inhibitory weights
-            inhIndex = len(net['W']) - 1
-            net['W'][inhIndex] = torch.unsqueeze(net['W'][inhIndex],0)
-        else: # stack new weights onto appended weight
-            net['W'][excIndex] = torch.concat((net['W'][excIndex], 
-                    torch.unsqueeze(torch.empty(nrow,ncol,device=device).normal_(mean=exWmn,std=exWsd),0)),0)
-            net['W'][inhIndex] = torch.concat((net['W'][inhIndex], 
-                    torch.unsqueeze(torch.empty(nrow,ncol,device=device).normal_(mean=inWmn,std=inWsd),0)),0) # inhibitory weights
-        net['W'][excIndex][n][net['W'][excIndex][n] < 0] = 0.0 # remove -ve excitatory weights
-        net['W'][inhIndex][n][net['W'][inhIndex][n] > 0] = 0.0 # remove +ve inhibitory weights
+    # Initialize excW and inhW as empty tensors
+    excW = torch.empty((0, nrow, ncol), device=device)
+    inhW = torch.empty((0, nrow, ncol), device=device)
+    
+    # Loop through modules and add excitatory and inhibitory weights
+    for n in range(num_modules):
+        if n == 0:  # first weights to be appended
+            # excitatory weights
+            excW = torch.cat((excW, torch.unsqueeze(torch.empty(nrow, ncol, device=device).normal_(mean=exWmn, std=exWsd), 0)), 0)
+            # inhibitory weights
+            inhW = torch.cat((inhW, torch.unsqueeze(torch.empty(nrow, ncol, device=device).normal_(mean=inWmn, std=inWsd), 0)), 0)
+        else:  # stack new weights onto appended weight
+            excW = torch.cat((excW, torch.unsqueeze(torch.empty(nrow, ncol, device=device).normal_(mean=exWmn, std=exWsd), 0)), 0)
+            inhW = torch.cat((inhW, torch.unsqueeze(torch.empty(nrow, ncol, device=device).normal_(mean=inWmn, std=inWsd), 0)), 0)
         
+        # Remove negative excitatory weights
+        excW[n][excW[n] < 0] = 0.0
+        # Remove positive inhibitory weights
+        inhW[n][inhW[n] > 0] = 0.0
+
         # remove connections based on exc and inh probabilities
         setzeroExc = np.random.rand(nrow,ncol) > p[0]
         setzeroInh = np.random.rand(nrow,ncol) > p[1]
         
         # add current
         if n == 0:
-            Iindex = len(net['I'])
-            net['I'].append(torch.zeros(nrow, device=device))
-            net['I'][Iindex] = torch.unsqueeze(net['I'][Iindex],0)
-            # append single reference arguments
-            net['W_lyr'].append([layer_pre,layer_post])
-            net['eta_stdp'].append(stdp_rate)
-            net['eta_stdp'].append(-stdp_rate)
-            net['is_inhib'].append(W_range[0]<0.0 and W_range[1]<=0.0)
+            I = torch.zeros(nrow, device=device)
+            I = torch.unsqueeze(I,0)
         else:
-            net['I'][Iindex] = torch.concat((net['I'][Iindex],
-                                torch.unsqueeze(torch.zeros(nrow, device=device),0)),0)
+            I = torch.concat((I,torch.unsqueeze(torch.zeros(nrow, device=device),0)),0)
         
         # remove connections based on calculated indexes
         if setzeroExc.any():
-            net['W'][excIndex][n,:,:][setzeroExc] = 0.0 # excitatory connections
+           excW[n,:,:][setzeroExc] = 0.0 # excitatory connections
         if setzeroInh.any():
-            net['W'][inhIndex][n,:,:][setzeroInh] = 0.0 # inhibitory connections
+            inhW[n,:,:][setzeroInh] = 0.0 # inhibitory connections
     
         # Normalise the weights (except fast inhib weights)
-        nrmExc = torch.linalg.norm(net['W'][excIndex][len(net['W'][excIndex])-1],ord=1,axis=0)
-        nrmInh = torch.linalg.norm(net['W'][inhIndex][len(net['W'][inhIndex])-1],ord=1,axis=0)
+        nrmExc = torch.linalg.norm(excW[len(excW)-1],ord=1,axis=0)
+        nrmInh = torch.linalg.norm(inhW[len(inhW)-1],ord=1,axis=0)
         nrmExc[nrmExc==0.0] = 1.0
         nrmInh[nrmInh==0.0] = 1.0
-        net['W'][excIndex][n] = net['W'][excIndex][n,:,:]/nrmExc
-        net['W'][inhIndex][n] = net['W'][inhIndex][n,:,:]/nrmInh
+        excW[n] = excW[n,:,:]/nrmExc
+        inhW[n] = inhW[n,:,:]/nrmInh
         
-        return net['W'][excIndex], net['W'][]
+        return excW, inhW, I
     
 ##################################
 # Normalise all the firing rates
