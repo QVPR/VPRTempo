@@ -32,6 +32,8 @@ sys.path.append('./src')
 sys.path.append('./weights')
 sys.path.append('./settings')
 sys.path.append('./output')
+sys.path.append('./dataset')
+sys.path.append('./config')
 
 import blitnet as bn
 import numpy as np
@@ -39,13 +41,17 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from config import configure
+from dataset import CustomImageDataset, ProcessImage
+from torch.utils.data import DataLoader
+from timeit import default_timer
 
 
 class SNNLayer(nn.Module):
-    def __init__(self, dims=[0,0,0], thr_range=[0,0], fire_rate=[0,0], 
-                 ip_rate=0, stdp_rate=0, const_inp=[0,0],assign_weight=False):
+    def __init__(self, previous_layer=None,dims=[0,0,0],thr_range=[0,0], 
+                 fire_rate=[0,0],ip_rate=0,stdp_rate=0,const_inp=[0,0],p=[0,0],
+                 assign_weight=False):
         super(SNNLayer, self).__init__()
-
+        configure(self)
         # Device
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         
@@ -69,89 +75,69 @@ class SNNLayer(nn.Module):
         self.fire_rate = torch.zeros(dims, device=self.device).uniform_(fire_rate[0], fire_rate[1])
         self.have_rate = torch.any(self.fire_rate[:,:,0] > 0.0).to(self.device)
         self.const_inp = torch.zeros(dims, device=self.device).uniform_(const_inp[0], const_inp[1])
+        self.p = p
+        self.dims = dims
         
         # Additional State Variables
         self.set_spks = []
         self.sspk_idx = 0
         self.spikes = torch.empty([], dtype=torch.float64)
         
-        # Store the layer numbers
-        self.layers.append(len(self.layers))
-        
         # Weights (if applicable)
         if assign_weight:
-            self.excW, self.inhW = bn.addWeights(self.layers)
+            self.excW, self.inhW, self.I = bn.addWeights(p=self.p,
+                                                 stdp_rate=self.eta_stdp,
+                                                 dims=[previous_layer.dims[2],
+                                                       dims[2]],
+                                                 num_modules=self.number_modules)
         
-class SNNTrainer:
-    def __init__(self, train_dataset, val_dataset, model_path):
-        
-        # Configure the network
-        configure(self) 
-        
-        self.train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-        self.val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
-        self.model_path = model_path
+class SNNTrainer(nn.Module):
+    def __init__(self):
+        super(SNNTrainer, self).__init__()
+        configure(self)
+
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         
-        self.model = SNNModel().to(self.device)
-        self.criterion = torch.nn.CrossEntropyLoss()  # Replace with appropriate loss function
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)  # Adjust learning rate
+        self.model = self.to(self.device)
         
         # Set up the input layer
         self.input_layer = SNNLayer(dims=[self.number_modules,1,self.input])
         
         # Set up the feature layer
-        self.feature_layer = SNNLayer(dims=[self.number_modules,1,self.feature],
+        self.feature_layer = SNNLayer(previous_layer=self.input_layer,
+                                      dims=[self.number_modules,1,self.feature],
                                       thr_range=[0,0.5],
                                       fire_rate=[0.2,0.9],
                                       ip_rate=0.15,
                                       stdp_rate=0.005,
                                       const_inp=[0,0.1],
+                                      p=[0.1,0.5],
                                       assign_weight=True)
         
         # Set up the output layer
-        self.output_layer = SNNLayer(dims=[self.number_modules,1,self.output],
-                                     assign_weight=True)
+        self.output_layer = SNNLayer(previous_layer=self.feature_layer,
+                                    dims=[self.number_modules,1,self.output],
+                                    assign_weight=True)
     
-    def train_model(self, num_epochs=50):
-        for epoch in range(num_epochs):
-            self.model.train()
-            running_loss = 0.0
-            for inputs, targets in self.train_loader:
-                inputs, targets = inputs.to(self.device), targets.to(self.device)
+    def train_model(self, train_loader):
+        # run the training for the input to feature layer
+        for n in range(self.epoch):
+            for images, labels in train_loader:
+                start = default_timer()
+                images = images.to(self.device)
+                print('It took '+str(default_timer()-start)+'s to load and process an image')
+                labels = labels.to(self.device)
+                bn.runSim(self.input_layer, self.feature_layer, images)
                 
-                self.optimizer.zero_grad()
-                
-                outputs = self.model(inputs)
-                loss = self.criterion(outputs, targets)
-                
-                loss.backward()
-                self.optimizer.step()
-                
-                running_loss += loss.item() * inputs.size(0)
-                
-            epoch_loss = running_loss / len(self.train_loader.dataset)
-            print(f"Epoch {epoch}/{num_epochs}, Loss: {epoch_loss}")
-            
-            # TODO: Add validation loop here
-        
         torch.save(self.model.state_dict(), self.model_path)
         print(f"Model saved at {self.model_path}")
-        
-    def load_or_train_model(self):
-        if os.path.exists(self.model_path):
-            print(f"Loading model from {self.model_path}")
-            self.model.load_state_dict(torch.load(self.model_path))
-        else:
-            print("Model not found, starting training.")
-            self.train_model()
 
 class SNNModel(nn.Module):
     def __init__(self):
         super(SNNModel, self).__init__()
-        
         # Configure the network
         configure(self) 
+        self.model = self.to(self.device)
         
     def forward(self, x):
         # Define the forward pass to transform the input x to an output
@@ -159,11 +145,24 @@ class SNNModel(nn.Module):
         out = bn.testSim(self)  # Assuming testSim is a function that can perform the forward pass
         return out
 
-
-# Testing the model:
 if __name__ == "__main__":
+    # initialize the model and image transforms
     model = SNNModel()
-    test_dataset = ... # TODO: Load your test dataset here
+    image_transform = ProcessImage(model.dims,model.patches)
+    
+    # TODO: check for existence of pre-existing model, if not then run training
+    # just run training and testing in tandem for now
+    train_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
+                                      img_dirs=model.training_dirs,
+                                      transform=image_transform,
+                                      skip=model.filter,
+                                      max_samples=model.number_training_images)
+    
+    train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
+    
+    # initialize the training model
+    trainer = SNNTrainer()
+    trainer.train_model(train_loader)
     
     model.eval()  # Set the model to evaluation mode
     with torch.no_grad():  # Disable gradient computation during testing
