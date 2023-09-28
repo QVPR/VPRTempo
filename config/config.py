@@ -9,7 +9,7 @@ def configure(model):
     model.dataset_file = './dataset/'+model.dataset+'.csv'
     model.trainingPath = '/home/adam/data/nordland/'
     model.testPath = '/home/adam/data/nordland/'
-    model.number_modules = 1
+    model.number_modules = 5
     model.number_training_images = 100
     model.number_testing_images = 100
     model.locations = ["spring", "fall"]
@@ -39,13 +39,13 @@ def configure(model):
     
     model.epoch = 4
     model.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    if model.device.type == "cuda":
-        os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-        torch.cuda.set_device(model.device)
-        gc.collect()
-        torch.cuda.empty_cache()
-        torch.cuda.init()
-        torch.cuda.synchronize(device=model.device)
+    #if model.device.type == "cuda":
+     #   os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+      #  torch.cuda.set_device(model.device)
+       # gc.collect()
+        #torch.cuda.empty_cache()
+        #torch.cuda.init()
+        #torch.cuda.synchronize(device=model.device)
     model.T = int((model.number_training_images / model.number_modules) * model.location_repeat)
     model.annl_pow = 2
     model.imgs = {'training': [], 'testing': []}

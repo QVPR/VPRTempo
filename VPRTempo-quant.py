@@ -26,7 +26,8 @@ Imports
 
 import os
 import torch
-
+import gc
+gc.disable()
 import sys
 sys.path.append('./src')
 sys.path.append('./weights')
@@ -41,7 +42,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from config import configure
-from dataset import CustomImageDataset, ProcessImage
+from dataset import CustomImageDataset, SetImageAsSpikes, ProcessImage
 from torch.utils.data import DataLoader
 from timeit import default_timer
 
@@ -49,7 +50,7 @@ from timeit import default_timer
 class SNNLayer(nn.Module):
     def __init__(self, previous_layer=None,dims=[0,0,0],thr_range=[0,0], 
                  fire_rate=[0,0],ip_rate=0,stdp_rate=0,const_inp=[0,0],p=[0,0],
-                 assign_weight=False):
+                 assign_weight=False,spk_force=False):
         super(SNNLayer, self).__init__()
         configure(self)
         # Device
@@ -82,6 +83,7 @@ class SNNLayer(nn.Module):
         self.set_spks = []
         self.sspk_idx = 0
         self.spikes = torch.empty([], dtype=torch.float64)
+        self.spk_force = spk_force
         
         # Weights (if applicable)
         if assign_weight:
@@ -117,18 +119,26 @@ class SNNTrainer(nn.Module):
         # Set up the output layer
         self.output_layer = SNNLayer(previous_layer=self.feature_layer,
                                     dims=[self.number_modules,1,self.output],
-                                    assign_weight=True)
+                                    assign_weight=True,spk_force=True)
     
     def train_model(self, train_loader):
+        
+        # Create some dummy tensors on CUDA
+        dummy_a = torch.randn(10, 10, device='cuda:0')
+        dummy_b = torch.randn(10, 10, device='cuda:0')
+        
+        # Perform a dummy bmm operation
+        torch.bmm(dummy_a.unsqueeze(0), dummy_b.unsqueeze(0))
+        
         # run the training for the input to feature layer
         for n in range(self.epoch):
             for images, labels in train_loader:
-                start = default_timer()
                 images = images.to(self.device)
-                print('It took '+str(default_timer()-start)+'s to load and process an image')
+                make_spikes = SetImageAsSpikes(self.intensity)
+                spikes = make_spikes(images)
                 labels = labels.to(self.device)
-                bn.runSim(self.input_layer, self.feature_layer, images)
-                
+                bn.runSim(self.input_layer, self.feature_layer, spikes)
+
         torch.save(self.model.state_dict(), self.model_path)
         print(f"Model saved at {self.model_path}")
 
@@ -156,9 +166,13 @@ if __name__ == "__main__":
                                       img_dirs=model.training_dirs,
                                       transform=image_transform,
                                       skip=model.filter,
-                                      max_samples=model.number_training_images)
+                                      max_samples=model.number_training_images,
+                                      modules=model.number_modules)
     
-    train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
+    train_loader = DataLoader(train_dataset, 
+                              batch_size=model.number_modules, 
+                              shuffle=False,
+                              num_workers=4)
     
     # initialize the training model
     trainer = SNNTrainer()
