@@ -26,100 +26,11 @@ Imports
 import numpy as np
 import pdb
 import torch
+import gc
 
-import matplotlib.pyplot as plt
-import torch.quantization as tq
 import torch.nn as nn
 
-
-##################################
-# Return a new empty BITnet instance
-
-def newNet(modules, dims):
-
-    np.random.seed() # new random seed
-
-    # ** NEURON FIELDS **
-    #  x         = activations
-    #  x_input   = total inputs
-    #  x_prev    = previous activations
-    #  x_calc    = calculated activations
-    #  x_fastinp = total inputs including fast inhib
-    #  dim       = dimensions
-    #  thr       = thresholds for each neuron
-    #  fire_rate = target firing rate for each neuron
-    #  have_rate = have a target firing rate
-    #  mean_rate = running avg firing rate for each neuron
-    #  eta_ip    = IP (threshold) learning rate
-    #  const_inp = constant input to each neuron
-    #  nois      = noise st.dev.
-    #  set_spks  = pre-defined spike times (if any)
-    #  sspk_idx  = current index into set_spks
-    #  spikes    = spike events
-    #  rec_spks  = record spikes?
-    #
-    # ** CONNECTION FIELDS **
-    #  W          = weights (-ve for inhib synapses)
-    #  I          = synaptic currents
-    #  is_inhib   = inhib weights flag
-    #  W_lyr      = pre and post layer numbers
-    #  eta_stdp   = STDP learning rate (-ve for inhib synapses)
-    #
-    # ** SIMULATION FIELDS **
-    #  step_num = current step
-
-    #pdb.set_trace()
-    net = dict(x=[],x_input=[],x_prev=[],x_calc=[],x_fastinp=[],dim=[],thr=[],
-               fire_rate=[],have_rate=[],mean_rate=[],eta_ip=[],const_inp=[],nois=[],
-               set_spks=[],sspk_idx=[],spikes=[],rec_spks=[],
-               W=[],I=[],is_inhib=[],W_lyr=[],eta_stdp=[],
-               step_num=0)
-    
-    return net
-
-##################################
-# Add a neuron layer (ie a neuron population)
-#  net:       BITnet instance
-#  dim:       layer dimensions [x,y,...]
-#  thr_range: initial threshold range
-#  fire_rate: target firing rate (0=no target)
-#  ip_rate:   intrinsic threshold plasticity (IP) rate (0=no IP)
-#  const_inp: constant input to each neuron (0=none)
-#  nois:      noise variance (0=no noise)
-#  rec_spks:  record spikes?
-
-def addLayer(net,dims,thr_range,fire_rate,ip_rate,const_inp,nois,rec_spks):
-    
-    # get torch device
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    
-    # Check constraints etc
-    if np.isscalar(thr_range): thr_range = [thr_range,thr_range]
-    if np.isscalar(fire_rate): fire_rate = [fire_rate,fire_rate]
-    if np.isscalar(const_inp): const_inp = [const_inp,const_inp]
-    
-    # create layer tensors
-    net['dim'].append(np.array(dims,int))
-    net['x'].append(torch.zeros(dims[0],dims[1],dims[2],device=device))
-    net['x_prev'].append(torch.zeros(dims[0],dims[1],dims[2],device=device))
-    net['x_calc'].append(torch.zeros(dims[0],dims[1],dims[2],device=device))
-    net['x_input'].append(torch.zeros(dims[0],dims[1],dims[2],device=device))
-    net['x_fastinp'].append(torch.zeros(dims[0],dims[1],dims[2],device=device))
-    net['eta_ip'].append(ip_rate)
-    temp_thr = torch.zeros(dims[0],dims[1],dims[2], device=device)
-    net['thr'].append(temp_thr.uniform_(thr_range[0],thr_range[1]))
-    temp_fire = torch.zeros(dims[0],dims[1],dims[2], device=device)
-    net['fire_rate'].append(temp_fire.uniform_(fire_rate[0],fire_rate[1]))
-    net['have_rate'].append(any(net['fire_rate'][-1][:,:,0]>0.0))
-
-    temp_const = torch.zeros(dims[0],dims[1],dims[2], device=device)
-    net['const_inp'].append(temp_const.uniform_(const_inp[0],const_inp[1]))
-
-    net['nois'].append(nois)
-    net['set_spks'].append([])
-    net['sspk_idx'].append(0)
-    net['spikes'].append(torch.empty([],dtype=torch.float64))
-    net['rec_spks'].append(rec_spks)
+from timeit import default_timer
 
 ##################################
 # Add a set of random connections between layers
@@ -191,35 +102,37 @@ def addWeights(W_range=[-1,0,1],p=[1,1],stdp_rate=0.001,dims=None,
         excW[n] = excW[n,:,:]/nrmExc
         inhW[n] = inhW[n,:,:]/nrmInh
         
-        return excW, inhW, I
+    return excW, inhW, I
     
 ##################################
 # Normalise all the firing rates
 #  net: BITnet instance
 
-def norm_rates(net):
-
-    for i,rate in enumerate(net['fire_rate']):
-        if rate.any() and net['eta_ip'][i] > 0.0:
-            net['thr'][i] = net['thr'][i] + net['eta_ip'][i]*(net['x'][i]-rate)
-            net['thr'][i][net['thr'][i]<0.0] = 0.0
+def norm_rates(pre_layer,post_layer):
+    # put layers into a list
+    layers = [pre_layer,post_layer]
+    
+    for layer in layers:
+        if layer.have_rate and layer.eta_ip > 0.0:
+            # adjust the firing threshold based on ideal firing rates and ITP
+            update = torch.mul(layer.eta_ip, torch.sub(layer.x, layer.fire_rate)) 
+            update[update<0.0] = 0.0
+             
+            # Replace the original layer.thr with the updated one
+            layer.thr.detach().add_(update) 
+    
+    torch.cuda.empty_cache()
             
 ##################################
 # Normalise inhib weights to balance input currents
 #  net: BITnet instance
 
-def norm_inhib(net):
+def norm_inhib(layer):
+    if torch.any(layer.inhW):
+        if layer.eta_ip != 0:
+            layer.inhW.add_(torch.mul(torch.mul(layer.x_input, layer.inhW), -layer.eta_ip*50), alpha=1)
+            layer.inhW[layer.inhW > 0.0] = -0.000001
 
-    for i,W in enumerate(net['W']):
-        if net['eta_stdp'][i] < 0:
-            lyr = net['W_lyr'][len(net['W_lyr'])-1]
-            try:
-                wadj = (net['x_input'][lyr[1]]*W)*-net['eta_stdp'][i]*50
-                net['W'][i] += wadj
-                net['W'][i][W>0.0] = -0.000001
-            except RuntimeWarning:
-                print("norm_inhib err")
-                pdb.set_trace()
                 
 ##################################
 # Propagate spikes thru the network
@@ -250,83 +163,51 @@ def add_spikesTest(net,device,dims):
 
 
 
-def add_spikes(net,device,dims):
+def const_thr(layer_pre,layer_post):
+    
+    # put layers into a list
+    layers = [layer_pre, layer_post]
     
     # Start with the constant input in the neurons of each layer
-    for i,const in enumerate(net['const_inp']):
-        if len(net['W_lyr']) > 1 and i == 1:
-            net['x_input'][i] = net['x_feat'][net['step_num']-1]
-        else:
-            net['x_input'][i] = torch.full_like(net['x_input'][i],0.0)
-            net['x_input'][i] += net['const_inp'][i]
+    for layer in layers:
+        if torch.any(layer.const_inp):
+            layer.x_input.fill_(0.0)  # In-place fill
+            layer.x_input.add_(layer.const_inp)  # In-place addition
+        
         # Find the threshold crossings (overwritten later if needed)
-            
-        net['x'][i] = torch.clamp((net['x_input'][i]-net['thr'][i]),0.0,0.9)
-    
-    # insert any predefined spikes
-    start = dims * (net['step_num'] - 1)
-    end = dims * net['step_num']
-    for i in range(len(net['set_spks'])):
-        if len(net['set_spks'][i]): # detect if any set_spks tensors
-            start = dims * (net['step_num'] - 1)
-            end = dims * net['step_num']
-            index = torch.arange(start,end,device=device,dtype=int)
-            if i == len(net['set_spks'])-1: # spike forcing
-                net['x'][i] = net['set_spks'][i].index_fill_(-1,index,0.5)
-            else:
-                net['x'][i] = torch.index_select(net['set_spks'][i],-1,index)
+        layer.x = torch.clamp(torch.sub(layer.x_input, layer.thr), 0.0, 0.9)
+        
+    del layers
 
-def calc_spikes(net,layersInfo):  
 
-    # get layer index information
-    excW = layersInfo[0]
-    inhW = layersInfo[1]
-    layers = net['W_lyr'][layersInfo[2]]
+def calc_spikes(post_layer,spikes):  
 
-    # Synaptic currents last for 1 timestep
-    # excitatory weights
-    net['I'][layers[0]] = torch.bmm(net['x'][layers[0]],net['W'][excW])
-    net['x_input'][layers[1]] += net['I'][layers[0]]
-    #inhibitory weights
-    net['I'][layers[0]] = torch.bmm(net['x'][layers[0]],net['W'][inhW])
-    net['x_input'][layers[1]] += net['I'][layers[0]]
-    
+    # Batch multiply the input spikes with the excitatory and inhibitory weights
+    post_layer.x_input.add_(torch.bmm(spikes,post_layer.excW))
+    post_layer.x_input.add_(torch.bmm(spikes,post_layer.inhW))
+
     # adjust the spikes based on threshold
-    if not len(net['set_spks'][layers[1]]): # No predefined spikes for this layer
-        net['x'][layers[1]] = torch.clamp((net['x_input'][layers[1]]-net['thr'][layers[1]]),
-                                          min=0.0,max=0.9)
+    if post_layer.spk_force: # This layer has spike forcing, remember calculated spikes
+        post_layer.x_calc = torch.clamp(torch.sub(post_layer.x_input,post_layer.thr),
+                                    min=0.0,max=0.9)
+
     else: # Predefined spikes exist for this layer, remember the calculated ones
-        net['x_calc'][layers[1]] = torch.clamp((net['x_input'][layers[1]]-net['thr'][layers[1]]),
+        post_layer.x = torch.clamp(torch.sub(post_layer.x_input,post_layer.thr),
                                         min=0.0,max=0.9)
     
     # update the x previous variable with calculated spikes
-    net['x_prev'][layers[1]] = net['x'][layers[1]]              
-                
-    # Finally, update mean firing rates and record all spikes if needed
-    for i,eta in enumerate(net['eta_ip']):
-        
-        if net['rec_spks'][i]:
-            outspk = (net['x'][i][0,0,:]).detach().cpu().numpy() # detach to numpy for easy plotting
-            n_idx = np.nonzero(outspk)
-            net['spikes'][i].extend([net['step_num']+net['x'][i][0,:,:].detach().cpu().numpy(),n]
-                                        for n in n_idx)
+    post_layer.x_prev = post_layer.x.detach()            
 
 ##################################
 # Calculate STDP
 #  net: BITnet instance
 
-def calc_stdp(net,layerInfo):
-    
-    # get weight layer information
-    excW = layerInfo[0]
-    inhW = layerInfo[1]
-    layers = net['W_lyr'][layerInfo[2]]
-    shape = list(net['W'][excW].size())
-
+def calc_stdp(pre_layer,post_layer,spikes):
+    layers = [pre_layer,post_layer]
     #
     # Spike Forcing has special rules to make calculated and forced spikes match
     #
-    if len(net['set_spks'][layers[1]]): # will run for the output layer
+    if layers[-1].spk_force: # will run for the output layer
 
         # Diff between forced and calculated spikes
         xdiff = net['x'][layers[1]] - net['x_calc'][layers[1]]
@@ -363,49 +244,56 @@ def calc_stdp(net,layerInfo):
     #
     else:
         
-        # tile out pre- and post-spikes
-        pre = torch.tile(torch.reshape(net['x'][layers[0]],(shape[0],shape[1],1)),(1,shape[2]))
-        post = torch.tile(net['x'][layers[1]],(shape[1],1))
-
-        # Excitatory synapses
-        havconnExc = net['W'][excW]>0
-        inc_stdpExc = (0.5-post)*(pre>0)*(post>0)*havconnExc
-        # Inhibitory synapses
-        havconnInh = net['W'][inhW]<0
-        inc_stdpInh = (0.5-post)*(pre>0)*(post>0)*havconnInh
-
-        # Apply the weight changes
-        net['W'][excW] += inc_stdpExc*net['eta_stdp'][excW]
-        net['W'][inhW] += inc_stdpInh*net['eta_stdp'][inhW]
+        # Reshape spikes tensor and get post activation tensor
+        pre = spikes.reshape(layers[-1].inhW.size(0), layers[-1].inhW.size(1), 1)
+        post = layers[-1].x
         
-    # fix connection weights if too +ve or -ve
-    # Excitation - pruning and synaptogenesis (structural plasticity)
-    net['W'][excW][net['W'][excW]<0.0] = 0.000001
-    net['W'][excW][net['W'][excW]>10.0] = 10.0
-    # Inhibition - must not go +ve
-    net['W'][inhW][net['W'][inhW]>0.0] = -0.000001
-    net['W'][inhW][net['W'][inhW]<-10.0] = -10.0
+        # Calculate the masks for excitatory and inhibitory connections
+        havconnExc = layers[-1].excW > 0
+        havconnInh = layers[-1].inhW < 0
+                
+        # Compute the increment for excW directly and apply the update
+        layers[-1].excW.add_(((0.5 - post) * (pre > 0) * (post > 0) * havconnExc).mul_(layers[-1].eta_stdp))
+        torch.cuda.empty_cache()
+        # Compute the increment for inhW directly and apply the update
+        layers[-1].inhW.add_(((0.5 - post) * (pre > 0) * (post > 0) * havconnInh).mul_(layers[-1].eta_stdp * -1))
+        torch.cuda.empty_cache()
+    
+    # In-place clamp for excitatory and inhibitory weights
+    layers[-1].excW = layers[-1].excW.clamp(min=0, max=10.0).detach()
+    torch.cuda.empty_cache()
+    layers[-1].inhW = layers[-1].inhW.clamp_(min=-10.0, max=0).detach()
+    torch.cuda.empty_cache()
+
 
 ##################################
 # Run the simulation
 #  net: BITnet instance
 #  n_steps: number of steps
 
-def runSim(net,n_steps,device,layers):
-
-    # Inc step count
-    net['step_num'] += 1
+def runSim(pre_layer,post_layer,spikes):
+    torch.cuda.synchronize(torch.device('cuda:0'))
     # Propagate spikes from pre to post neurons
-    add_spikes(net,device,net['spike_dims'])
-    calc_spikes(net,layers)
-    
+    #start = default_timer()
+    const_thr(pre_layer,post_layer)
+    #print("add_spikes time: ", default_timer() - start)
+    #start = default_timer()
+    calc_spikes(post_layer,spikes)
+    #print("calc_spikes time: ", default_timer() - start)
     # Calculate STDP weight changes
-    calc_stdp(net,layers)
-    
+    #start = default_timer()
+    calc_stdp(pre_layer,post_layer,spikes)
+    #print("calc_stdp time: ", default_timer() - start)
     # Normalise firing rates and inhibitory balance
-    norm_rates(net)
-    norm_inhib(net)
-        
+    #start = default_timer()
+    norm_rates(pre_layer,post_layer)
+    #print("norm_rates time: ", default_timer() - start)
+    #start = default_timer()
+    norm_inhib(post_layer)
+    #print("norm_inhib time: ", default_timer() - start)
+    #start = default_timer()
+    torch.cuda.empty_cache()
+    #print("clear cache time: ", default_timer() - start)
 def testSim(net,device):
     
     net['step_num'] += 1
@@ -413,73 +301,3 @@ def testSim(net,device):
     for n in range(int(len(net['W'])/2)): # run loop for number of layers
         layers = [int(0 + (n*2)), int(1 + (n*2)), int(0 + n)]
         calc_spikes(net,layers)
-
-##################################
-# Plot recorded spikes in current subplot
-#  net: BITnet instance
-
-def subplotSpikes(net,cutoff):
-     
-    n_tot = 0
-    for i,sp in enumerate(net['spikes']):
-        x=[]; y=[]
-        for n in sp:
-            x.extend(list(n[0]))
-            y.extend(list(n[1]+n_tot))
-
-        plt.plot(x,y,'.',ms=1)
-        n_tot += np.size(net['x'][i].detach().cpu().numpy())
-    
-##################################
-# Plot recorded spikes in new figure
-#  net: BITnet instance
-
-def plotSpikes(net,cutoff):
-
-    plt.figure()
-    subplotSpikes(net,cutoff)
-    plt.show(block=False)
-    
-# apply QAT once training is done
-def QAT(net):
-    
-    # Initialize an empty dictionary to hold the CPU tensors
-    cpu_dict = {}
-    
-
-    # Iterate over the items in the original dictionary
-    for key, value in net.items():
-        # If the value associated with the key is a list
-        if isinstance(value, list):
-            # Initialize an empty list to hold the converted tensors
-            converted_list = []
-            # Iterate over the list elements
-            for elem in value:
-                # Check if the element is a tensor
-                if isinstance(elem, torch.Tensor):
-                    # If it is a tensor, move it to CPU
-                    converted_list.append(elem.cpu())
-                else:
-                    # If it is not a tensor, keep it as it is
-                    converted_list.append(elem)
-            cpu_dict[key] = converted_list
-        # If the value is a single tensor
-        elif isinstance(value, torch.Tensor):
-            cpu_dict[key] = value.cpu()
-        # If the value is neither a list nor a tensor, keep it as it is
-        else:
-            cpu_dict[key] = value
-    weight_qconfig = tq.QConfig(
-    activation=tq.FakeQuantize.with_args(observer=tq.MinMaxObserver,
-                                         dtype=torch.qint8),
-                                        weight=tq.FakeQuantize.with_args(observer=tq.MinMaxObserver, 
-                                        dtype=torch.quint8))   
-    
-    fake_quant_weight = tq.FakeQuantize(observer=tq.MinMaxObserver, 
-                                        quant_min=0, 
-                                        quant_max=255, 
-                                        dtype=torch.quint8)
-    fake_quant_weight(cpu_dict['W'][0])
-
-    
-##################################

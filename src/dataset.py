@@ -69,6 +69,22 @@ class PatchNormalisePad:
         
         return im_norm
 
+class SetImageAsSpikes:
+    def __init__(self,intensity):
+        self.intensity = intensity
+
+    def __call__(self, img_tensor):
+        # Ensure the input is a 4D tensor (N x C x W x H)
+        if len(img_tensor.shape) == 3:
+            img_tensor = img_tensor.unsqueeze(1)
+        
+        N, C, W, H = img_tensor.shape
+        reshaped_batch = img_tensor.view(N, 1, -1)
+        
+        # Divide all pixel values by 255
+        normalized_batch = reshaped_batch / self.intensity
+
+        return normalized_batch
 
 class ProcessImage:
     def __init__(self, dims, patches):
@@ -102,7 +118,7 @@ class ProcessImage:
 
 class CustomImageDataset(Dataset):
     def __init__(self, annotations_file, img_dirs, transform=None, target_transform=None, 
-                 skip=1, max_samples=None):
+                 skip=1, max_samples=None, modules=1):
         self.transform = transform
         self.target_transform = target_transform
         self.skip = skip
@@ -120,9 +136,33 @@ class CustomImageDataset(Dataset):
             if max_samples is not None:
                 img_labels = img_labels.iloc[:max_samples]
             
-            self.img_labels.append(img_labels)
+            # Reorder images in the DataFrame
+            reordered_img_labels = self.reorder_images(img_labels, modules)
+            self.img_labels.append(reordered_img_labels)
+        
+        # Concatenate all the reordered DataFrames
         self.img_labels = pd.concat(self.img_labels, ignore_index=True)
         
+    def reorder_images(self, img_labels, modules):
+        # Calculate the number of batches
+        num_batches = len(img_labels) // modules
+        remainder = len(img_labels) % modules
+        
+        reordered_list = []
+        for i in range(num_batches):
+            for j in range(modules):
+                idx = i + j * num_batches
+                if idx < len(img_labels):
+                    reordered_list.append(img_labels.iloc[idx])
+        
+        # If there are remaining images, append them to the reordered list
+        for i in range(remainder):
+            idx = num_batches * modules + i
+            reordered_list.append(img_labels.iloc[idx])
+        
+        # Convert reordered list of Series back to DataFrame
+        return pd.concat(reordered_list, axis=1).transpose().reset_index(drop=True)
+    
     def __len__(self):
         return len(self.img_labels)
     
