@@ -7,8 +7,8 @@ from datetime import datetime
 def configure(model):
     model.dataset = 'nordland'
     model.dataset_file = './dataset/'+model.dataset+'.csv'
-    model.trainingPath = '/home/adam/data/nordland/'
-    model.testPath = '/home/adam/data/nordland/'
+    model.trainingPath = '/Users/adam/data/nordland/'
+    model.testPath = '/Users/adam/data/nordland/'
     model.number_modules = 5
     model.number_training_images = 100
     model.number_testing_images = 100
