@@ -114,13 +114,13 @@ def norm_rates(pre_layer,post_layer):
     
     for layer in layers:
         if layer.have_rate and layer.eta_ip > 0.0:
-            # adjust the firing threshold based on ideal firing rates and ITP
-            update = torch.mul(layer.eta_ip, torch.sub(layer.x, layer.fire_rate)) 
-            update[update<0.0] = 0.0
-             
+           # update = torch.add(layer.thr,
+            #    torch.mul(layer.eta_ip, torch.sub(layer.x, layer.fire_rate))) 
             # Replace the original layer.thr with the updated one
-            layer.thr.detach().add_(update) 
-    
+            layer.thr.detach().add_(torch.add(layer.thr,
+                torch.mul(layer.eta_ip, torch.sub(layer.x, layer.fire_rate)))) 
+            layer.thr = nn.Parameter(torch.where(layer.thr < 0, torch.zeros_like(layer.thr), layer.thr))
+
     torch.cuda.empty_cache()
             
 ##################################
@@ -131,36 +131,13 @@ def norm_inhib(layer):
     if torch.any(layer.inhW):
         if layer.eta_ip != 0:
             layer.inhW.add_(torch.mul(torch.mul(layer.x_input, layer.inhW), -layer.eta_ip*50), alpha=1)
-            layer.inhW[layer.inhW > 0.0] = -0.000001
-
-                
-##################################
-# Propagate spikes thru the network
-#  net: SORN instance
-def add_spikesTest(net,device,dims):
-    
-    # Start with the constant input in the neurons of each layer
-    for i,const in enumerate(net['const_inp']):
-
-        net['x_input'][i] = torch.full_like(net['x_input'][i],0.0)
-        net['x_input'][i] += net['const_inp'][i]
-        # Find the threshold crossings (overwritten later if needed)
+            if torch.isnan(layer.inhW).any():
+                raise ValueError("NaN value detected in layer.inhW after addition operation")
             
-        net['x'][i] = torch.clamp((net['x_input'][i]-net['thr'][i]),0.0,0.9)
-    
-    # insert any predefined spikes
-    start = dims * (net['step_num'] - 1)
-    end = dims * net['step_num']
-    for i in range(len(net['set_spks'])):
-        if len(net['set_spks'][i]): # detect if any set_spks tensors
-            start = dims * (net['step_num'] - 1)
-            end = dims * net['step_num']
-            index = torch.arange(start,end,device=device,dtype=int)
-            if i == len(net['set_spks'])-1: # spike forcing
-                net['x'][i] = net['set_spks'][i].index_fill_(-1,index,0.5)
-            else:
-                net['x'][i] = torch.index_select(net['set_spks'][i],-1,index)
-
+            layer.inhW[layer.inhW > 0.0] = -0.000001
+            
+            if torch.isnan(layer.inhW).any():
+                raise ValueError("NaN value detected in layer.inhW after setting positive values to -0.000001")
 
 
 def const_thr(layer_pre,layer_post):
@@ -172,31 +149,70 @@ def const_thr(layer_pre,layer_post):
     for layer in layers:
         if torch.any(layer.const_inp):
             layer.x_input.fill_(0.0)  # In-place fill
+            if torch.isnan(layer.x_input).any():
+                raise ValueError("NaN value detected in layer.x_input after filling with zeros")
+            
             layer.x_input.add_(layer.const_inp)  # In-place addition
+            if torch.isnan(layer.x_input).any():
+                raise ValueError("NaN value detected in layer.x_input after adding const_inp")
         
         # Find the threshold crossings (overwritten later if needed)
         layer.x = torch.clamp(torch.sub(layer.x_input, layer.thr), 0.0, 0.9)
-        
-    del layers
+        if torch.isnan(layer.x).any():
+            raise ValueError("NaN value detected in layer.x after clamping")
 
 
 def calc_spikes(post_layer,spikes):  
-
-    # Batch multiply the input spikes with the excitatory and inhibitory weights
+    
+    # Check for NaN in spikes and post_layer.excW before the operation
+    if torch.isnan(spikes).any():
+        raise ValueError("NaN value detected in spikes before excitatory weight multiplication")
+    if torch.isnan(post_layer.excW).any():
+        raise ValueError("NaN value detected in post_layer.excW before excitatory weight multiplication")
+    
+    # Batch multiply the input spikes with the excitatory weights
     post_layer.x_input.add_(torch.bmm(spikes,post_layer.excW))
+    
+    # Check for NaN in post_layer.x_input after the operation
+    if torch.isnan(post_layer.x_input).any():
+        raise ValueError("NaN value detected in post_layer.x_input after excitatory weight multiplication")
+    
+    # Check for NaN in spikes and post_layer.inhW before the next operation
+    if torch.isnan(spikes).any():
+        raise ValueError("NaN value detected in spikes before inhibitory weight multiplication")
+    if torch.isnan(post_layer.inhW).any():
+        raise ValueError("NaN value detected in post_layer.inhW before inhibitory weight multiplication")
+    
+    # Batch multiply the input spikes with the inhibitory weights
     post_layer.x_input.add_(torch.bmm(spikes,post_layer.inhW))
+    
+    # Check for NaN in post_layer.x_input after the operation
+    if torch.isnan(post_layer.x_input).any():
+        raise ValueError("NaN value detected in post_layer.x_input after inhibitory weight multiplication")
+
 
     # adjust the spikes based on threshold
-    if post_layer.spk_force: # This layer has spike forcing, remember calculated spikes
+    if post_layer.spk_force: 
+        # This layer has spike forcing, remember calculated spikes
         post_layer.x_calc = torch.clamp(torch.sub(post_layer.x_input,post_layer.thr),
-                                    min=0.0,max=0.9)
-
-    else: # Predefined spikes exist for this layer, remember the calculated ones
-        post_layer.x = torch.clamp(torch.sub(post_layer.x_input,post_layer.thr),
                                         min=0.0,max=0.9)
+        if torch.isnan(post_layer.x_calc).any():
+            raise ValueError("NaN value detected in post_layer.x_calc")
+        
+    else: 
+        # Predefined spikes exist for this layer, remember the calculated ones
+        post_layer.x = torch.clamp(torch.sub(post_layer.x_input,post_layer.thr),
+                                   min=0.0,max=0.9)
+        if torch.isnan(post_layer.x).any():
+            raise ValueError("NaN value detected in post_layer.x")
     
     # update the x previous variable with calculated spikes
-    post_layer.x_prev = post_layer.x.detach()            
+    post_layer.x_prev = post_layer.x.detach()
+    if torch.isnan(post_layer.x_prev).any():
+        raise ValueError("NaN value detected in post_layer.x_prev")
+
+
+         
 
 ##################################
 # Calculate STDP
@@ -244,26 +260,71 @@ def calc_stdp(pre_layer,post_layer,spikes):
     #
     else:
         
-        # Reshape spikes tensor and get post activation tensor
-        pre = spikes.reshape(layers[-1].inhW.size(0), layers[-1].inhW.size(1), 1)
-        post = layers[-1].x
+
+
+        # Assuming layers is a predefined list containing your layer objects
         
-        # Calculate the masks for excitatory and inhibitory connections
+        shape = [len(layers[-1].excW[:, 0, 0]),
+                 len(layers[-1].excW[0, :, 0]),
+                 len(layers[-1].excW[0, 0, :])]
+        
+        # Tile out pre- and post-spikes
+        pre = torch.tile(torch.reshape(spikes, (shape[0], shape[1], 1)), (1, shape[2]))
+        
+        if torch.isnan(pre).any():
+            raise ValueError("NaN value detected in pre")
+        
+        post = torch.tile(layers[-1].x, (shape[1], 1))
+        
+        if torch.isnan(post).any():
+            raise ValueError("NaN value detected in post")
+        
+        # Excitatory synapses
         havconnExc = layers[-1].excW > 0
+        inc_stdpExc = (0.5 - post) * (pre > 0) * (post > 0) * havconnExc
+        
+        if torch.isnan(inc_stdpExc).any():
+            raise ValueError("NaN value detected in inc_stdpExc")
+        
+        # Inhibitory synapses
         havconnInh = layers[-1].inhW < 0
-                
-        # Compute the increment for excW directly and apply the update
-        layers[-1].excW.add_(((0.5 - post) * (pre > 0) * (post > 0) * havconnExc).mul_(layers[-1].eta_stdp))
+        inc_stdpInh = (0.5 - post) * (pre > 0) * (post > 0) * havconnInh
+        
+        if torch.isnan(inc_stdpInh).any():
+            raise ValueError("NaN value detected in inc_stdpInh")
+        
+        # Apply the weight changes
+        layers[-1].excW += inc_stdpExc * layers[-1].eta_stdp
+        
+        if torch.isnan(layers[-1].excW).any():
+            raise ValueError("NaN value detected in layers[-1].excW after weight changes")
+        
+        layers[-1].inhW += inc_stdpExc * (layers[-1].eta_stdp * -1)
+        
+        if torch.isnan(layers[-1].inhW).any():
+            raise ValueError("NaN value detected in layers[-1].inhW after weight changes")
+        
+        # In-place clamp for excitatory and inhibitory weights
+        # Apply clamping only where the mask is True (non-zero elements)
+        layers[-1].excW = torch.where(havconnExc,
+                                      layers[-1].excW.clamp(min=0.000001, max=10.0),
+                                      layers[-1].excW).detach()
+        
+        if torch.isnan(layers[-1].excW).any():
+            raise ValueError("NaN value detected in layers[-1].excW after clamping")
+        
         torch.cuda.empty_cache()
-        # Compute the increment for inhW directly and apply the update
-        layers[-1].inhW.add_(((0.5 - post) * (pre > 0) * (post > 0) * havconnInh).mul_(layers[-1].eta_stdp * -1))
+        
+        # Apply clamping only where the mask is True (non-zero elements)
+        layers[-1].inhW = torch.where(havconnInh,
+                                      layers[-1].inhW.clamp(min=-10.0, max=-0.000001),
+                                      layers[-1].inhW).detach()
+        
+        if torch.isnan(layers[-1].inhW).any():
+            raise ValueError("NaN value detected in layers[-1].inhW after clamping")
+        
         torch.cuda.empty_cache()
-    
-    # In-place clamp for excitatory and inhibitory weights
-    layers[-1].excW = layers[-1].excW.clamp(min=0, max=10.0).detach()
-    torch.cuda.empty_cache()
-    layers[-1].inhW = layers[-1].inhW.clamp_(min=-10.0, max=0).detach()
-    torch.cuda.empty_cache()
+
 
 
 ##################################
@@ -272,28 +333,20 @@ def calc_stdp(pre_layer,post_layer,spikes):
 #  n_steps: number of steps
 
 def runSim(pre_layer,post_layer,spikes):
-    torch.cuda.synchronize(torch.device('cuda:0'))
+    #torch.cuda.synchronize(torch.device('cuda:0'))
     # Propagate spikes from pre to post neurons
-    #start = default_timer()
     const_thr(pre_layer,post_layer)
-    #print("add_spikes time: ", default_timer() - start)
-    #start = default_timer()
     calc_spikes(post_layer,spikes)
-    #print("calc_spikes time: ", default_timer() - start)
+
     # Calculate STDP weight changes
-    #start = default_timer()
     calc_stdp(pre_layer,post_layer,spikes)
-    #print("calc_stdp time: ", default_timer() - start)
+
     # Normalise firing rates and inhibitory balance
-    #start = default_timer()
     norm_rates(pre_layer,post_layer)
-    #print("norm_rates time: ", default_timer() - start)
-    #start = default_timer()
     norm_inhib(post_layer)
-    #print("norm_inhib time: ", default_timer() - start)
-    #start = default_timer()
+
     torch.cuda.empty_cache()
-    #print("clear cache time: ", default_timer() - start)
+
 def testSim(net,device):
     
     net['step_num'] += 1
