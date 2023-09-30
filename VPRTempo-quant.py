@@ -45,6 +45,7 @@ from config import configure
 from dataset import CustomImageDataset, SetImageAsSpikes, ProcessImage
 from torch.utils.data import DataLoader
 from timeit import default_timer
+from tqdm import tqdm
 
 
 class SNNLayer(nn.Module):
@@ -124,20 +125,29 @@ class SNNTrainer(nn.Module):
     def train_model(self, train_loader):
         
         # Create some dummy tensors on CUDA
-        dummy_a = torch.randn(10, 10, device='cuda:0')
-        dummy_b = torch.randn(10, 10, device='cuda:0')
+        dummy_a = torch.randn(10, 10, device=self.device)
+        dummy_b = torch.randn(10, 10, device=self.device)
         
         # Perform a dummy bmm operation
         torch.bmm(dummy_a.unsqueeze(0), dummy_b.unsqueeze(0))
         
+        n_initstdp = self.feature_layer.eta_stdp.detach()
+        n_initip = self.feature_layer.eta_ip.detach()
+        
         # run the training for the input to feature layer
-        for n in range(self.epoch):
+        for n in tqdm(range(self.epoch)):
+            mod = 0
             for images, labels in train_loader:
                 images = images.to(self.device)
                 make_spikes = SetImageAsSpikes(self.intensity)
                 spikes = make_spikes(images)
                 labels = labels.to(self.device)
                 bn.runSim(self.input_layer, self.feature_layer, spikes)
+                if np.mod(mod,10)==0:
+                    pt = pow(float(self.T-mod)/self.T,self.annl_pow)
+                    self.feature_layer.eta_ip = torch.mul(n_initip,pt)
+                    self.feature_layer.eta_stdp = torch.mul(n_initstdp,pt)
+                mod += 1
 
         torch.save(self.model.state_dict(), self.model_path)
         print(f"Model saved at {self.model_path}")
@@ -172,7 +182,8 @@ if __name__ == "__main__":
     train_loader = DataLoader(train_dataset, 
                               batch_size=model.number_modules, 
                               shuffle=False,
-                              num_workers=4)
+                              num_workers=4,
+                              persistent_workers=True)
     
     # initialize the training model
     trainer = SNNTrainer()
