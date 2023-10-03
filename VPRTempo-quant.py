@@ -27,7 +27,7 @@ Imports
 import os
 import torch
 import gc
-gc.disable()
+#gc.disable()
 import sys
 sys.path.append('./src')
 sys.path.append('./weights')
@@ -50,7 +50,7 @@ from tqdm import tqdm
 
 class SNNLayer(nn.Module):
     def __init__(self, previous_layer=None,dims=[0,0,0],thr_range=[0,0], 
-                 fire_rate=[0,0],ip_rate=0,stdp_rate=0,const_inp=[0,0],p=[0,0],
+                 fire_rate=[0,0],ip_rate=0,stdp_rate=0,const_inp=[0,0],p=[1,1],
                  assign_weight=False,spk_force=False):
         super(SNNLayer, self).__init__()
         configure(self)
@@ -64,7 +64,7 @@ class SNNLayer(nn.Module):
         
         # Initialize Tensors
         self.dim = torch.tensor(dims, dtype=torch.int)
-        self.x = torch.zeros(dims, device=self.device)
+        self.x = torch.zeros(dims, device=self.device,requires_grad=False)
         self.x_prev = torch.zeros(dims, device=self.device)
         self.x_calc = torch.zeros(dims, device=self.device)
         self.x_input = torch.zeros(dims, device=self.device)
@@ -88,7 +88,7 @@ class SNNLayer(nn.Module):
         
         # Weights (if applicable)
         if assign_weight:
-            self.excW, self.inhW, self.I = bn.addWeights(p=self.p,
+            self.excW, self.inhW, self.I, self.havconnExc, self.havconnInh = bn.addWeights(p=self.p,
                                                  stdp_rate=self.eta_stdp,
                                                  dims=[previous_layer.dims[2],
                                                        dims[2]],
@@ -98,9 +98,9 @@ class SNNTrainer(nn.Module):
     def __init__(self):
         super(SNNTrainer, self).__init__()
         configure(self)
-
-        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         
+        # Set the device and model on defined device
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.model = self.to(self.device)
         
         # Set up the input layer
@@ -120,35 +120,74 @@ class SNNTrainer(nn.Module):
         # Set up the output layer
         self.output_layer = SNNLayer(previous_layer=self.feature_layer,
                                     dims=[self.number_modules,1,self.output],
-                                    assign_weight=True,spk_force=True)
+                                    stdp_rate=0.005,
+                                    assign_weight=True,
+                                    spk_force=True)
+        
+        # Define number of layers (will run training on all layers)
+        self.layers = {'layer0':self.input_layer,
+                       'layer1':self.feature_layer,
+                       'layer2':self.output_layer}
     
     def train_model(self, train_loader):
         
-        # Create some dummy tensors on CUDA
-        dummy_a = torch.randn(10, 10, device=self.device)
-        dummy_b = torch.randn(10, 10, device=self.device)
+        # If using CUDA, run a dummy torch.bmm to 'spool-up' operations
+        if self.device.type == "cuda":
+            # Create some dummy tensors on CUDA
+            dummy_a = torch.randn(10, 10, device=self.device)
+            dummy_b = torch.randn(10, 10, device=self.device)
+            
+            # Perform a dummy bmm operation
+            torch.bmm(dummy_a.unsqueeze(0), dummy_b.unsqueeze(0))
         
-        # Perform a dummy bmm operation
-        torch.bmm(dummy_a.unsqueeze(0), dummy_b.unsqueeze(0))
-        
-        n_initstdp = self.feature_layer.eta_stdp.detach()
-        n_initip = self.feature_layer.eta_ip.detach()
-        
-        # run the training for the input to feature layer
-        for n in tqdm(range(self.epoch)):
-            mod = 0
-            for images, labels in train_loader:
-                images = images.to(self.device)
-                make_spikes = SetImageAsSpikes(self.intensity)
-                spikes = make_spikes(images)
-                labels = labels.to(self.device)
-                bn.runSim(self.input_layer, self.feature_layer, spikes)
-                if np.mod(mod,10)==0:
-                    pt = pow(float(self.T-mod)/self.T,self.annl_pow)
-                    self.feature_layer.eta_ip = torch.mul(n_initip,pt)
-                    self.feature_layer.eta_stdp = torch.mul(n_initstdp,pt)
-                mod += 1
+        # Run the training for each layer, using defined parameters
+        for layer in range(len(self.layers)-1):
+            
+            # Define in and out layer
+            in_layer = self.layers['layer'+str(layer)]
+            out_layer = self.layers['layer'+str(layer+1)]
+            
+            # Output the learning rates for annealment during training
+            n_initstdp = out_layer.eta_stdp.detach() # STDP
+            n_initip = out_layer.eta_ip.detach() # ITP
+            
+            # Run the training for the input to feature layer for specified epochs
+            for n in tqdm(range(self.epoch)):
+                mod = 0 # Used to determine the learning rate annealment
+                for images, labels in train_loader: 
+                    # Put input images on device (CPU, CUDA)
+                    images = images.to(self.device)
+                    
+                    # Set spikes from input images
+                    make_spikes = SetImageAsSpikes(self.intensity)
+                    spikes = make_spikes(images)
+                    
+                    # Put labels on device (CPU, CUDA)
+                    labels = labels.to(self.device)
+                    idx = labels/self.filter
 
+                    # Layers don't include loaded input, calculate network spikes for up to training layers
+                    if layer != 0:
+                        spikes = bn.testSim(self.layers,layer,spikes,idx)
+                        
+                    # Run one timestep of the training input to feature layer
+                    bn.runSim(in_layer, out_layer, spikes, idx)
+                    
+                    # Anneal the learning rate
+                    if np.mod(mod,10)==0:
+                        pt = pow(float(self.T-mod)/self.T,self.annl_pow)
+                        out_layer.eta_ip = torch.mul(n_initip,pt)
+                        out_layer.eta_stdp = torch.mul(n_initstdp,pt)
+                    mod += 1
+            
+            # Once layers have finished training, turn off any learning
+            out_layer.eta_ip = 0
+            out_layer.eta_stdp = 0
+            out_layer.excW.requires_grad_(False)
+            out_layer.inhW.requires_grad_(False)
+            out_layer.thr.requires_grad_(False)
+        
+    def save_model(self):
         torch.save(self.model.state_dict(), self.model_path)
         print(f"Model saved at {self.model_path}")
 
