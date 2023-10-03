@@ -27,10 +27,9 @@ Imports
 import os
 import torch
 import gc
-#gc.disable()
 import sys
 sys.path.append('./src')
-sys.path.append('./weights')
+sys.path.append('./models')
 sys.path.append('./settings')
 sys.path.append('./output')
 sys.path.append('./dataset')
@@ -44,7 +43,6 @@ import torch.nn.functional as F
 from config import configure
 from dataset import CustomImageDataset, SetImageAsSpikes, ProcessImage
 from torch.utils.data import DataLoader
-from timeit import default_timer
 from tqdm import tqdm
 
 
@@ -88,20 +86,22 @@ class SNNLayer(nn.Module):
         
         # Weights (if applicable)
         if assign_weight:
-            self.excW, self.inhW, self.I, self.havconnExc, self.havconnInh = bn.addWeights(p=self.p,
+            excW, inhW, self.I, self.havconnExc, self.havconnInh = bn.addWeights(p=self.p,
                                                  stdp_rate=self.eta_stdp,
                                                  dims=[previous_layer.dims[2],
                                                        dims[2]],
                                                  num_modules=self.number_modules)
+            
+            self.excW = nn.Parameter(excW)
+            self.inhW = nn.Parameter(inhW)
         
 class SNNTrainer(nn.Module):
     def __init__(self):
         super(SNNTrainer, self).__init__()
         configure(self)
         
-        # Set the device and model on defined device
+        # Set the device
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        self.model = self.to(self.device)
         
         # Set up the input layer
         self.input_layer = SNNLayer(dims=[self.number_modules,1,self.input])
@@ -186,18 +186,43 @@ class SNNTrainer(nn.Module):
             out_layer.excW.requires_grad_(False)
             out_layer.inhW.requires_grad_(False)
             out_layer.thr.requires_grad_(False)
-        
-    def save_model(self):
-        torch.save(self.model.state_dict(), self.model_path)
-        print(f"Model saved at {self.model_path}")
+            
+        torch.cuda.empty_cache()
+        gc.collect()
+
+    def save_model(self, model_out):    
+        # save model
+        torch.save(self.state_dict(), model_out)
 
 class SNNModel(nn.Module):
     def __init__(self):
         super(SNNModel, self).__init__()
         # Configure the network
         configure(self) 
-        self.model = self.to(self.device)
         
+        # Set up the input layer
+        self.input_layer = SNNLayer(dims=[self.number_modules,1,self.input])
+        
+        # Set up the feature layer
+        self.feature_layer = SNNLayer(previous_layer=self.input_layer,
+                                      dims=[self.number_modules,1,self.feature],
+                                      assign_weight=True)
+        
+        # Set up the output layer
+        self.output_layer = SNNLayer(previous_layer=self.feature_layer,
+                                    dims=[self.number_modules,1,self.output],
+                                    assign_weight=True,)
+        
+        # Define number of layers (will run training on all layers)
+        self.layers = {'layer0':self.input_layer,
+                       'layer1':self.feature_layer,
+                       'layer2':self.output_layer}
+        
+    def load_model(self,model_path):
+        state_dict = torch.load(model_path, map_location=self.device)
+        self.load_state_dict(state_dict)
+        self.eval()
+    
     def forward(self, x):
         # Define the forward pass to transform the input x to an output
         # TODO: Replace with actual forward pass code
@@ -205,30 +230,68 @@ class SNNModel(nn.Module):
         return out
 
 if __name__ == "__main__":
-    # initialize the model and image transforms
+    # Initialize the model and image transforms
     model = SNNModel()
+    
+    # Generate model name, check if pre-trained model exists
+    model_name = "VPRTempo"+(str(model.input)+
+                  str(model.feature)+
+                  str(model.output)+
+                  str(model.number_modules)+'-'+
+                  str(model.device.type)+'.pth')
+    if os.path.exists(os.path.join('./models',model_name)):
+        pretrain_flg = True
+        prompt = "A network with these parameters exists, re-train network? (y/n):\n"
+        retrain = input(prompt)
+        if retrain == 'y':
+            pretrain_flg = False
+    else:
+        pretrain_flg = False
+    
+    # Define the image transform class
     image_transform = ProcessImage(model.dims,model.patches)
     
-    # TODO: check for existence of pre-existing model, if not then run training
-    # just run training and testing in tandem for now
-    train_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
-                                      img_dirs=model.training_dirs,
+    # If no pre-existing model, train new model with set configuration
+    if not pretrain_flg:
+        # Define the custom training image dataset class
+        train_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
+                                          img_dirs=model.training_dirs,
+                                          transform=image_transform,
+                                          skip=model.filter,
+                                          max_samples=model.number_training_images,
+                                          modules=model.number_modules,
+                                          test=False)
+        
+        # Define the training dataloader class
+        train_loader = DataLoader(train_dataset, 
+                                  batch_size=model.number_modules, 
+                                  shuffle=False,
+                                  num_workers=4,
+                                  persistent_workers=True)
+        
+        # Initialize, run, and save the training model
+        trainer = SNNTrainer()
+        trainer.train_model(train_loader)
+        trainer.save_model(os.path.join('./models',model_name))
+    
+    # Load the trained model into SNNModel()
+    model.load_model(os.path.join('./models',model_name))    
+    
+    # Define the custom testing image dataset class
+    test_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
+                                      img_dirs=model.testing_dirs,
                                       transform=image_transform,
                                       skip=model.filter,
-                                      max_samples=model.number_training_images,
+                                      max_samples=model.number_testing_images,
                                       modules=model.number_modules)
     
-    train_loader = DataLoader(train_dataset, 
+    # Define the testing dataloader class
+    test_loader = DataLoader(test_dataset, 
                               batch_size=model.number_modules, 
                               shuffle=False,
                               num_workers=4,
                               persistent_workers=True)
     
-    # initialize the training model
-    trainer = SNNTrainer()
-    trainer.train_model(train_loader)
-    
-    model.eval()  # Set the model to evaluation mode
     with torch.no_grad():  # Disable gradient computation during testing
         for inputs, targets in test_dataset:
             outputs = model(inputs)  # This calls the forward method and gets the model’s outputs

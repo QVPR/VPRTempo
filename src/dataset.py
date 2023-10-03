@@ -118,7 +118,7 @@ class ProcessImage:
 
 class CustomImageDataset(Dataset):
     def __init__(self, annotations_file, img_dirs, transform=None, target_transform=None, 
-                 skip=1, max_samples=None, modules=1):
+                 skip=1, max_samples=None, modules=1, test=True):
         self.transform = transform
         self.target_transform = target_transform
         self.skip = skip
@@ -135,6 +135,10 @@ class CustomImageDataset(Dataset):
             # Limit the number of samples to max_samples if specified
             if max_samples is not None:
                 img_labels = img_labels.iloc[:max_samples]
+            
+            # Determine if the images being fed are training or testing
+            if test:
+                poopy=1
             
             # Reorder images in the DataFrame
             reordered_img_labels = self.reorder_images(img_labels, modules)
