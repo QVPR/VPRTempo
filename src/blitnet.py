@@ -134,7 +134,7 @@ def norm_rates(pre_layer,post_layer):
             # Replace the original layer.thr with the updated one
             layer.thr = nn.Parameter(torch.where(layer.thr + layer.eta_ip * (layer.x - layer.fire_rate) < 0, 
                                                  torch.zeros_like(layer.thr), 
-                                                 layer.thr + layer.eta_ip * (layer.x - layer.fire_rate)))
+                                                 layer.thr + (layer.eta_ip * (layer.x - layer.fire_rate))))
 
             
     torch.cuda.empty_cache()
@@ -192,7 +192,7 @@ def calc_stdp(pre_layer,post_layer,spikes,idx=0):
              len(layers[-1].excW[0, :, 0]),
              len(layers[-1].excW[0, 0, :])]
         # Get the output neuron index
-        idx_sel = torch.arange(int(idx),int(idx)+1,device=layers[-1].device,dtype=int)   
+        idx_sel = torch.arange(int(idx[0]),int(idx[0])+1,device=layers[-1].device,dtype=int)   
     
         # Difference between forced and calculated spikes
         layers[-1].x = torch.full_like(layers[-1].x,0)
