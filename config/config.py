@@ -1,7 +1,8 @@
 import os
-import gc
 import torch
 import logging
+import csv
+
 from datetime import datetime
 
 def configure(model):
@@ -9,11 +10,11 @@ def configure(model):
     model.dataset_file = './dataset/'+model.dataset+'.csv'
     model.trainingPath = '/home/adam/data/nordland/'
     model.testPath = '/home/adam/data/nordland/'
-    model.number_modules = 1
+    model.number_modules = 5
     model.number_training_images = 500
     model.number_testing_images = 500
     model.locations = ["spring","fall"]
-    model.test_location = "summer"
+    model.test_locations = "summer"
     model.filter = 8
     model.validation = True
     model.log = False
@@ -21,12 +22,16 @@ def configure(model):
     model.training_dirs = []
     for n in model.locations:
         model.training_dirs.append(os.path.join(model.trainingPath,n))
-
+        
+    model.testing_dirs = []
+    for n in model.test_locations:
+        model.testing_dirs.append(os.path.join(model.testPath,n))
+        
     assert (len(model.dataset) != 0), "Dataset not defined, see README.md for details on setting up images"
     assert (os.path.isdir(model.trainingPath)), "Training path not set or path does not exist, specify for model.trainingPath"
     assert (os.path.isdir(model.testPath)), "Test path not set or path does not exist, specify for model.testPath"
     assert (os.path.isdir(model.trainingPath + model.locations[0])), "Images must be organized into folders based on locations, see README.md for details"
-    assert (os.path.isdir(model.testPath + model.test_location)), "Images must be organized into folders based on locations, see README.md for details"
+    assert (os.path.isdir(model.testPath + model.test_locations)), "Images must be organized into folders based on locations, see README.md for details"
 
     model.patches = 7
     model.dims = [28,28]
@@ -53,9 +58,11 @@ def configure(model):
     model.spike_rates = {'training': [], 'testing': []}
     
     model.test_true = False
-    
-    with open('./' + model.dataset + '_imageNames.txt') as file:
-        model.imageNames = [line.rstrip() for line in file]
+
+    with open(os.path.join('./dataset', model.dataset + '.csv'), mode='r', newline='', encoding='utf-8') as file:
+        reader = csv.reader(file)
+        model.imageNames = [row[0] for row in reader]
+    del model.imageNames[0]
         
     model.filteredNames = []
     for n in range(0, len(model.imageNames), model.filter):
@@ -112,4 +119,4 @@ def configure(model):
     #model.logger.info('Dataset used: ' + str(model.dataset))
     #model.logger.info('Training locations: ' + str(model.locations))
     #model.logger.info('Testing location: ' + str(model.test_location))
-    #model.training_out = './weights/' + str(model.input_layer) + 'i' + str(model.feature_layer) + 'f' + str(model.output_layer) + 'o' + str(model.epoch) + '/'
+    #model.training_out = './models/' + str(model.input_layer) + 'i' + str(model.feature_layer) + 'f' + str(model.output_layer) + 'o' + str(model.epoch) + '/'
