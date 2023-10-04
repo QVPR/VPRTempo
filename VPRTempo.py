@@ -45,11 +45,10 @@ from dataset import CustomImageDataset, SetImageAsSpikes, ProcessImage
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-
 class SNNLayer(nn.Module):
     def __init__(self, previous_layer=None,dims=[0,0,0],thr_range=[0,0], 
                  fire_rate=[0,0],ip_rate=0,stdp_rate=0,const_inp=[0,0],p=[1,1],
-                 assign_weight=False,spk_force=False):
+                 assign_weight=False,spk_force=False,requires_grad=False):
         super(SNNLayer, self).__init__()
         configure(self)
         # Device
@@ -62,7 +61,7 @@ class SNNLayer(nn.Module):
         
         # Initialize Tensors
         self.dim = torch.tensor(dims, dtype=torch.int)
-        self.x = torch.zeros(dims, device=self.device,requires_grad=False)
+        self.x = torch.zeros(dims, device=self.device)
         self.x_prev = torch.zeros(dims, device=self.device)
         self.x_calc = torch.zeros(dims, device=self.device)
         self.x_input = torch.zeros(dims, device=self.device)
@@ -86,14 +85,13 @@ class SNNLayer(nn.Module):
         
         # Weights (if applicable)
         if assign_weight:
-            excW, inhW, self.I, self.havconnExc, self.havconnInh = bn.addWeights(p=self.p,
-                                                 stdp_rate=self.eta_stdp,
+            excW, inhW, self.havconnExc, self.havconnInh = bn.addWeights(p=self.p,
                                                  dims=[previous_layer.dims[2],
                                                        dims[2]],
                                                  num_modules=self.number_modules)
             
-            self.excW = nn.Parameter(excW)
-            self.inhW = nn.Parameter(inhW)
+            self.excW = nn.Parameter(excW, requires_grad=requires_grad)
+            self.inhW = nn.Parameter(inhW, requires_grad=requires_grad)
         
 class SNNTrainer(nn.Module):
     def __init__(self):
@@ -115,14 +113,17 @@ class SNNTrainer(nn.Module):
                                       stdp_rate=0.005,
                                       const_inp=[0,0.1],
                                       p=[0.1,0.5],
-                                      assign_weight=True)
+                                      assign_weight=True,
+                                      requires_grad=True)
         
         # Set up the output layer
         self.output_layer = SNNLayer(previous_layer=self.feature_layer,
                                     dims=[self.number_modules,1,self.output],
+                                    ip_rate=0.15,
                                     stdp_rate=0.005,
                                     assign_weight=True,
-                                    spk_force=True)
+                                    spk_force=True,
+                                    requires_grad=True)
         
         # Define number of layers (will run training on all layers)
         self.layers = {'layer0':self.input_layer,
@@ -159,7 +160,7 @@ class SNNTrainer(nn.Module):
                     images = images.to(self.device)
                     
                     # Set spikes from input images
-                    make_spikes = SetImageAsSpikes(self.intensity)
+                    make_spikes = SetImageAsSpikes(self.intensity, test=False)
                     spikes = make_spikes(images)
                     
                     # Put labels on device (CPU, CUDA)
@@ -168,17 +169,21 @@ class SNNTrainer(nn.Module):
 
                     # Layers don't include loaded input, calculate network spikes for up to training layers
                     if layer != 0:
-                        spikes = bn.testSim(self.layers,layer,spikes,idx)
-                        
+                        spikes = bn.testSim(self.layers,layer,spikes)
+                    
                     # Run one timestep of the training input to feature layer
                     bn.runSim(in_layer, out_layer, spikes, idx)
-                    
+
                     # Anneal the learning rate
                     if np.mod(mod,10)==0:
                         pt = pow(float(self.T-mod)/self.T,self.annl_pow)
                         out_layer.eta_ip = torch.mul(n_initip,pt)
                         out_layer.eta_stdp = torch.mul(n_initstdp,pt)
                     mod += 1
+                    
+                    # Reset x and x_input for next iteration
+                    out_layer.x.fill_(0.0)
+                    out_layer.x_input.fill_(0.0)
             
             # Once layers have finished training, turn off any learning
             out_layer.eta_ip = 0
@@ -187,9 +192,9 @@ class SNNTrainer(nn.Module):
             out_layer.inhW.requires_grad_(False)
             out_layer.thr.requires_grad_(False)
             
-        torch.cuda.empty_cache()
-        gc.collect()
-
+            torch.cuda.empty_cache()
+            gc.collect()
+        
     def save_model(self, model_out):    
         # save model
         torch.save(self.state_dict(), model_out)
@@ -211,7 +216,7 @@ class SNNModel(nn.Module):
         # Set up the output layer
         self.output_layer = SNNLayer(previous_layer=self.feature_layer,
                                     dims=[self.number_modules,1,self.output],
-                                    assign_weight=True,)
+                                    assign_weight=True)
         
         # Define number of layers (will run training on all layers)
         self.layers = {'layer0':self.input_layer,
@@ -223,29 +228,61 @@ class SNNModel(nn.Module):
         self.load_state_dict(state_dict)
         self.eval()
     
-    def forward(self, x):
-        # Define the forward pass to transform the input x to an output
-        # TODO: Replace with actual forward pass code
-        out = bn.testSim(self)  # Assuming testSim is a function that can perform the forward pass
-        return out
+    def forward(self, test_loader):
+        
+        # If using CUDA, run a dummy torch.bmm to 'spool-up' operations
+        if self.device.type == "cuda":
+            # Create some dummy tensors on CUDA
+            dummy_a = torch.randn(10, 10, device=self.device)
+            dummy_b = torch.randn(10, 10, device=self.device)
+            
+            # Perform a dummy bmm operation
+            torch.bmm(dummy_a.unsqueeze(0), dummy_b.unsqueeze(0))
+        idx=0
+        numcorr = 0
 
+        # Run test network for each individual input
+        for images, labels in test_loader:
+            # Set images to the specified device
+            images = images.to(self.device)
+            labels = labels.to(self.device)
+            # Set the spikes for the input, tiling across modules if applicable
+            make_spikes = SetImageAsSpikes(intensity=self.intensity,
+                                           modules=self.number_modules)
+            spikes = make_spikes(images)
+            
+            # Run the test sim
+            out = bn.testSim(self.layers,len(self.layers)-1,spikes)
+            tonump = np.array([])
+            tonump = np.append(tonump,np.reshape(out.cpu().numpy(),
+                                        [1,1,int(self.number_training_images)]))
+            if np.argmax(tonump) == idx:
+                numcorr += 1
+            idx+=1
+        pause=1
 if __name__ == "__main__":
     # Initialize the model and image transforms
     model = SNNModel()
     
     # Generate model name, check if pre-trained model exists
-    model_name = "VPRTempo"+(str(model.input)+
-                  str(model.feature)+
-                  str(model.output)+
-                  str(model.number_modules)+'-'+
-                  str(model.device.type)+'.pth')
+    model_name = ("VPRTempo"+ # main name
+                  str(model.input)+ # number input neurons
+                  str(model.feature)+ # number feature neurons
+                  str(model.output)+ # number output neurons
+                  str(model.number_modules)+ # number of modules
+                  '.pth')
     if os.path.exists(os.path.join('./models',model_name)):
         pretrain_flg = True
+        
+        # Prompt user to retrain network if desired
         prompt = "A network with these parameters exists, re-train network? (y/n):\n"
         retrain = input(prompt)
+        
+        # Retrain network, set flag to False
         if retrain == 'y':
             pretrain_flg = False
     else:
+        # No pretrained model exists
         pretrain_flg = False
     
     # Define the image transform class
@@ -274,25 +311,22 @@ if __name__ == "__main__":
         trainer.train_model(train_loader)
         trainer.save_model(os.path.join('./models',model_name))
     
-    # Load the trained model into SNNModel()
-    model.load_model(os.path.join('./models',model_name))    
-    
-    # Define the custom testing image dataset class
-    test_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
-                                      img_dirs=model.testing_dirs,
-                                      transform=image_transform,
-                                      skip=model.filter,
-                                      max_samples=model.number_testing_images,
-                                      modules=model.number_modules)
-    
-    # Define the testing dataloader class
-    test_loader = DataLoader(test_dataset, 
-                              batch_size=model.number_modules, 
-                              shuffle=False,
-                              num_workers=4,
-                              persistent_workers=True)
-    
     with torch.no_grad():  # Disable gradient computation during testing
-        for inputs, targets in test_dataset:
-            outputs = model(inputs)  # This calls the forward method and gets the model’s outputs
-            # TODO: Compute your evaluation metric(s) by comparing outputs to targets
+        # Load the trained model into SNNModel()
+        model.load_model(os.path.join('./models',model_name))    
+        
+        # Define the custom testing image dataset class
+        test_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
+                                          img_dirs=model.testing_dirs,
+                                          transform=image_transform,
+                                          skip=model.filter,
+                                          max_samples=model.number_testing_images,
+                                          modules=model.number_modules)
+        
+        # Define the testing dataloader class
+        test_loader = DataLoader(test_dataset, 
+                                  batch_size=1, 
+                                  shuffle=False,
+                                  num_workers=4,
+                                  persistent_workers=True)
+        model.forward(test_loader)
