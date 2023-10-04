@@ -38,7 +38,7 @@ from timeit import default_timer
 #  p:          initial connection probability
 #  stdp_rate:  STDP rate (0=no STDP)
 
-def addWeights(W_range=[-1,0,1],p=[1,1],stdp_rate=0.001,dims=None,
+def addWeights(W_range=[-1,0,1],p=[1,1],dims=None,
                num_modules=1):
 
     # get torch device
@@ -93,13 +93,6 @@ def addWeights(W_range=[-1,0,1],p=[1,1],stdp_rate=0.001,dims=None,
         setzeroExc = np.random.rand(nrow,ncol) > p[0]
         setzeroInh = np.random.rand(nrow,ncol) > p[1]
         
-        # add current
-        if n == 0:
-            I = torch.zeros(nrow, device=device)
-            I = torch.unsqueeze(I,0)
-        else:
-            I = torch.concat((I,torch.unsqueeze(torch.zeros(nrow, device=device),0)),0)
-        
         # remove connections based on calculated indexes
         if setzeroExc.any():
            excW[n,:,:][setzeroExc] = 0.0 # excitatory connections
@@ -117,7 +110,7 @@ def addWeights(W_range=[-1,0,1],p=[1,1],stdp_rate=0.001,dims=None,
     havconnExc = excW > 0
     havconnInh = inhW < 0
         
-    return excW, inhW, I, havconnExc, havconnInh
+    return excW, inhW, havconnExc, havconnInh
     
 ##################################
 # Normalise all the firing rates
@@ -129,22 +122,18 @@ def norm_rates(pre_layer,post_layer):
     
     for layer in layers:
         if layer.have_rate and layer.eta_ip > 0.0:
-           # update = torch.add(layer.thr,
-            #    torch.mul(layer.eta_ip, torch.sub(layer.x, layer.fire_rate))) 
             # Replace the original layer.thr with the updated one
             layer.thr = nn.Parameter(torch.where(layer.thr + layer.eta_ip * (layer.x - layer.fire_rate) < 0, 
                                                  torch.zeros_like(layer.thr), 
                                                  layer.thr + (layer.eta_ip * (layer.x - layer.fire_rate))))
 
             
-    torch.cuda.empty_cache()
-            
 ##################################
 # Normalise inhib weights to balance input currents
 #  net: BITnet instance
 
 def norm_inhib(layer):
-    if torch.any(layer.inhW):
+    if torch.any(layer.inhW).item():
         if layer.eta_ip != 0:
             updated_inhW = layer.inhW + torch.mul(torch.mul(layer.x_input, layer.inhW), 
                                                   layer.eta_stdp*50)
@@ -156,28 +145,27 @@ def norm_inhib(layer):
 def const_thr(layer_pre, layer_post):
     layers = [layer_pre, layer_post]
     for layer in layers:
-        if torch.any(layer.const_inp):
-            layer.x_input.fill_(0.0)  
-            layer.x_input.add_(layer.const_inp)
-        
-        layer.x.detach().add_(torch.clamp(torch.sub(layer.x_input, layer.thr),
-                                          0.0, 0.9))
+        layer.x_input.fill_(0.0) 
+        if torch.any(layer.const_inp).item():
+            layer.x_input.add_(layer.const_inp)  # No need to detach const_inp
+            # Detach thr to prevent gradients
+            layer.x.detach().add_(torch.clamp(torch.sub(layer.x_input, layer.thr.detach()), 
+                                              0.0, 0.9))
 
 
 
 def calc_spikes(post_layer, spikes):  
 
-    post_layer.x_input.detach().add_(torch.bmm(spikes, post_layer.excW))
-    post_layer.x_input.detach().add_(torch.bmm(spikes, post_layer.inhW))
+    # Use detached versions of excW, inhW, and thr to prevent gradients from flowing
+    post_layer.x_input.add_(torch.bmm(spikes, post_layer.excW.detach()))
+    post_layer.x_input.add_(torch.bmm(spikes, post_layer.inhW.detach()))
     
     if post_layer.spk_force: 
-        post_layer.x_calc.detach().add_(torch.clamp(torch.sub(post_layer.x_input, post_layer.thr),
+        post_layer.x_calc.detach().add_(torch.clamp(torch.sub(post_layer.x_input, post_layer.thr.detach()),
                                                     min=0.0, max=0.9))
     else: 
-        post_layer.x = torch.full_like(post_layer.x,0)
-        post_layer.x.detach().add_(torch.clamp(torch.sub(post_layer.x_input, post_layer.thr), 
+        post_layer.x.add_(torch.clamp(torch.sub(post_layer.x_input, post_layer.thr.detach()), 
                                                 min=0.0, max=0.9))
-      
 
 ##################################
 # Calculate STDP
@@ -235,8 +223,12 @@ def calc_stdp(pre_layer,post_layer,spikes,idx=0):
         post = torch.tile(layers[-1].x, (shape[1], 1))
 
         # Apply the weight changes
-        layers[-1].excW = nn.Parameter(layers[-1].excW + ((0.5 - post) * (pre > 0) * (post > 0) * layers[-1].havconnExc) * layers[-1].eta_stdp)
-        layers[-1].inhW = nn.Parameter(layers[-1].inhW + ((0.5 - post) * (pre > 0) * (post > 0) * layers[-1].havconnInh) * (layers[-1].eta_stdp * -1))
+        layers[-1].excW = nn.Parameter(layers[-1].excW + 
+                                       ((0.5 - post) * (pre > 0) * (post > 0) * layers[-1].havconnExc)
+                                       * layers[-1].eta_stdp)
+        layers[-1].inhW = nn.Parameter(layers[-1].inhW + 
+                                       ((0.5 - post) * (pre > 0) * (post > 0) * layers[-1].havconnInh)
+                                       * (layers[-1].eta_stdp * -1))
         
     # In-place clamp for excitatory and inhibitory weights
     # Apply clamping only where the mask is True (non-zero elements)
@@ -273,10 +265,13 @@ def runSim(pre_layer,post_layer,spikes,idx):
     
     del spikes
 
-def testSim(layers,layer_num,spikes,idx):
+def testSim(layers,layer_num,spikes):
     
     # run the test system through all specified layers to get an output
     for n in range(layer_num):
+        layers['layer'+str(n+1)].x.fill_(0.0)
+        layers['layer'+str(n+1)].x_input.fill_(0.0)
         calc_spikes(layers['layer'+str(n+1)],spikes)
+        spikes=layers['layer'+str(n+1)].x
         
-    return layers['layer'+str(n+1)].x
+    return spikes
