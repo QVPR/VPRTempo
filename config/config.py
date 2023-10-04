@@ -8,13 +8,13 @@ from datetime import datetime
 def configure(model):
     model.dataset = 'nordland'
     model.dataset_file = './dataset/'+model.dataset+'.csv'
-    model.trainingPath = '/home/adam/data/nordland/'
-    model.testPath = '/home/adam/data/nordland/'
-    model.number_modules = 5
-    model.number_training_images = 500
-    model.number_testing_images = 500
+    model.trainingPath = '/Users/adam/data/nordland/'
+    model.testPath = '/Users/adam/data/nordland/'
+    model.number_modules = 1
+    model.number_training_images = 100
+    model.number_testing_images = 100
     model.locations = ["spring","fall"]
-    model.test_locations = "summer"
+    model.test_locations = ["spring"]
     model.filter = 8
     model.validation = True
     model.log = False
@@ -31,7 +31,7 @@ def configure(model):
     assert (os.path.isdir(model.trainingPath)), "Training path not set or path does not exist, specify for model.trainingPath"
     assert (os.path.isdir(model.testPath)), "Test path not set or path does not exist, specify for model.testPath"
     assert (os.path.isdir(model.trainingPath + model.locations[0])), "Images must be organized into folders based on locations, see README.md for details"
-    assert (os.path.isdir(model.testPath + model.test_locations)), "Images must be organized into folders based on locations, see README.md for details"
+    assert (os.path.isdir(model.testPath + model.test_locations[0])), "Images must be organized into folders based on locations, see README.md for details"
 
     model.patches = 7
     model.dims = [28,28]
@@ -42,7 +42,7 @@ def configure(model):
     model.location_repeat = len(model.locations)
     model.layers =[]
     
-    model.epoch = 4
+    model.epoch = 1
     model.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     #if model.device.type == "cuda":
      #   os.environ["CUDA_LAUNCH_BLOCKING"] = "1"

@@ -70,8 +70,10 @@ class PatchNormalisePad:
         return im_norm
 
 class SetImageAsSpikes:
-    def __init__(self,intensity):
+    def __init__(self,intensity=255,test=True,modules=1):
         self.intensity = intensity
+        self.test = test
+        self.modules = modules
 
     def __call__(self, img_tensor):
         # Ensure the input is a 4D tensor (N x C x W x H)
@@ -83,6 +85,10 @@ class SetImageAsSpikes:
         
         # Divide all pixel values by 255
         normalized_batch = reshaped_batch / self.intensity
+        
+        # If running test, repeat input over all the modules
+        if self.test:
+            normalized_batch = normalized_batch.repeat(self.modules, 1, 1)
 
         return normalized_batch
 
@@ -127,7 +133,7 @@ class CustomImageDataset(Dataset):
         self.img_labels = []
         for img_dir in img_dirs:
             img_labels = pd.read_csv(annotations_file)
-            img_labels['file_path'] = img_labels.apply(lambda row: os.path.join(img_dir, row[0]), axis=1)
+            img_labels['file_path'] = img_labels.apply(lambda row: os.path.join(img_dir, row.iloc[0]), axis=1)
             
             # Select specific rows based on the skip parameter
             img_labels = img_labels.iloc[::skip]
@@ -138,14 +144,15 @@ class CustomImageDataset(Dataset):
             
             # Determine if the images being fed are training or testing
             if test:
-                poopy=1
-            
-            # Reorder images in the DataFrame
-            reordered_img_labels = self.reorder_images(img_labels, modules)
-            self.img_labels.append(reordered_img_labels)
+                self.img_labels = img_labels
+            else:
+                # Reorder images in the DataFrame
+                reordered_img_labels = self.reorder_images(img_labels, modules)
+                self.img_labels.append(reordered_img_labels)
         
-        # Concatenate all the reordered DataFrames
-        self.img_labels = pd.concat(self.img_labels, ignore_index=True)
+        if isinstance(self.img_labels,list):
+            # Concatenate all the reordered DataFrames
+            self.img_labels = pd.concat(self.img_labels, ignore_index=True)
         
     def reorder_images(self, img_labels, modules):
         # Calculate the number of batches
@@ -176,7 +183,7 @@ class CustomImageDataset(Dataset):
             raise FileNotFoundError(f"No file found for index {idx} at {img_path}.")
             
         image = read_image(img_path)
-        label = self.img_labels.iloc[idx, 1]  # Assuming label is the second column
+        label = self.img_labels.iloc[idx, 1]
         
         if self.transform:
             image = self.transform(image)
