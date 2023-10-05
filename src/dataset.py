@@ -11,22 +11,21 @@ from torchvision.io import read_image
 from torch.utils.data import Dataset
 
 class GetPatches2D:
-    def __init__(self, patch_size):
-        self.patch_size = (patch_size,patch_size)
+    def __init__(self, patch_size, image_pad):
+        self.patch_size = patch_size
+        self.image_pad = image_pad
     
     def __call__(self, img):
-        # Calculating the padding
-        padding = (self.patch_size[1] // 2, self.patch_size[1] // 2,
-                   self.patch_size[0] // 2, self.patch_size[0] // 2)
 
-        # Apply zero padding
-        image_pad = F.pad(img, padding, value=float('nan'))
+        # Assuming image_pad is already a PyTorch tensor. If not, you can convert it:
+        # image_pad = torch.tensor(image_pad).to(torch.float64)
 
-        # Unfolding the image to get the patches
-        patches = image_pad.unfold(0, self.patch_size[0], 1).unfold(1, self.patch_size[1], 1)
-        
-        # Reshaping the patches
-        patches = patches.contiguous().view(self.patch_size[0] * self.patch_size[1], -1)
+        # Using unfold to get 2D sliding windows.
+        unfolded = self.image_pad.unfold(0, self.patch_size[0], 1).unfold(1, self.patch_size[1], 1)
+        # The size of unfolded will be [nrows, ncols, patch_size[0], patch_size[1]]
+
+        # Reshaping the tensor to the desired shape
+        patches = unfolded.permute(2, 3, 0, 1).contiguous().view(self.patch_size[0]*self.patch_size[1], -1)
 
         return patches
 
@@ -34,38 +33,57 @@ class GetPatches2D:
 class PatchNormalisePad:
     def __init__(self, patches):
         self.patches = patches
+
+    
+    def nanstd(self,input_tensor, dim=None, unbiased=True):
+        if dim is not None:
+            valid_count = torch.sum(~torch.isnan(input_tensor), dim=dim, dtype=torch.float)
+            mean = torch.nansum(input_tensor, dim=dim) / valid_count
+            diff = input_tensor - mean.unsqueeze(dim)
+            variance = torch.nansum(diff * diff, dim=dim) / valid_count
+
+            # Bessel's correction for unbiased estimation
+            if unbiased:
+                variance = variance * (valid_count / (valid_count - 1))
+        else:
+            valid_count = torch.sum(~torch.isnan(input_tensor), dtype=torch.float)
+            mean = torch.nansum(input_tensor) / valid_count
+            diff = input_tensor - mean
+            variance = torch.nansum(diff * diff) / valid_count
+            
+            # Bessel's correction for unbiased estimation
+            if unbiased:
+                variance = variance * (valid_count / (valid_count - 1))
+
+        return torch.sqrt(variance)
    
     def __call__(self, img):
-        img = img.squeeze(0)
-        nrows, ncols = img.shape[:2]
-        patcher = GetPatches2D(self.patches)
+        img = torch.squeeze(img,0)
+        patch_size = (self.patches, self.patches)
+        patch_half_size = [int((p-1)/2) for p in patch_size ]
+        
+        # Compute the padding. If patch_half_size is a scalar, the same value will be used for all sides.
+        if isinstance(patch_half_size, int):
+            pad = (patch_half_size, patch_half_size, patch_half_size, patch_half_size)  # left, right, top, bottom
+        else:
+            # If patch_half_size is a tuple, then we'll assume it's in the format (height, width)
+            pad = (patch_half_size[1], patch_half_size[1], patch_half_size[0], patch_half_size[0])  # left, right, top, bottom
+
+        # Apply padding
+        image_pad = F.pad(img, pad, mode='constant', value=float('nan'))
+
+        nrows = img.shape[0] 
+        ncols = img.shape[1]
+        patcher = GetPatches2D(patch_size,image_pad)
         patches = patcher(img)
         mus = torch.nanmean(patches, dim=0)
-        # Subtracting the mean from the original tensor
-        diff = patches - mus
+        stds = self.nanstd(patches, dim=0)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            im_norm = (img - mus.reshape(nrows, ncols)) / stds.reshape(nrows, ncols)
         
-        # Replacing NaN values with zeros in the difference tensor
-        diff[torch.isnan(diff)] = 0
-        
-        # Calculating the unbiased estimator of the variance, ignoring NaN values
-        var = torch.nansum(diff**2, dim=0) / (torch.sum(~torch.isnan(patches), dim=0) - 1)
-        
-        # Taking the square root to get the standard deviation
-        stds = torch.sqrt(var)
-    
-        # Reshape mus and stds
-        mus_reshaped = mus.reshape(nrows, ncols)
-        stds_reshaped = stds.reshape(nrows, ncols)
-        
-        # Perform the normalization, handling division by zero
-        # Note: PyTorch, by default, does not raise an error or warning for NaN or Inf, it will propagate them in the computation
-        im_norm = (img - mus_reshaped) / stds_reshaped
-        
-        # Replace NaN values with 0.0
         im_norm[torch.isnan(im_norm)] = 0.0
-        
-        # Clamp values to the range [-1.0, 1.0]
-        im_norm = torch.clamp(im_norm, min=-1.0, max=1.0)
+        im_norm[im_norm < -1.0] = -1.0
+        im_norm[im_norm > 1.0] = 1.0
         
         return im_norm
 
@@ -89,7 +107,7 @@ class SetImageAsSpikes:
         # If running test, repeat input over all the modules
         if self.test:
             normalized_batch = normalized_batch.repeat(self.modules, 1, 1)
-
+           
         return normalized_batch
 
 class ProcessImage:

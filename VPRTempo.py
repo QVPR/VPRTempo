@@ -39,6 +39,7 @@ import blitnet as bn
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.optim as optim
 
 from config import configure
 from dataset import CustomImageDataset, SetImageAsSpikes, ProcessImage
@@ -72,6 +73,16 @@ class SNNLayer(nn.Module):
         # Initialize Parameters
         self.thr = nn.Parameter(torch.zeros(dims, device=self.device).uniform_(thr_range[0], thr_range[1]))
         self.fire_rate = torch.zeros(dims, device=self.device).uniform_(fire_rate[0], fire_rate[1])
+        
+        # Sequentially set the feature firing rates (if any)
+        if not torch.all(self.fire_rate==0).item():
+            fstep = (fire_rate[1]-fire_rate[0])/dims[-1]
+            
+            # loop through all modules and feature layer neurons
+            for x in range(self.number_modules):
+                for i in range(dims[-1]):
+                   self.fire_rate[x][:,i] = fire_rate[0]+fstep*(i+1)
+                   
         self.have_rate = torch.any(self.fire_rate[:,:,0] > 0.0).to(self.device)
         self.const_inp = torch.zeros(dims, device=self.device).uniform_(const_inp[0], const_inp[1])
         self.p = p
@@ -113,8 +124,8 @@ class SNNTrainer(nn.Module):
                                       stdp_rate=0.005,
                                       const_inp=[0,0.1],
                                       p=[0.1,0.5],
-                                      assign_weight=True,
-                                      requires_grad=True)
+                                      requires_grad=True,
+                                      assign_weight=True)
         
         # Set up the output layer
         self.output_layer = SNNLayer(previous_layer=self.feature_layer,
@@ -122,13 +133,14 @@ class SNNTrainer(nn.Module):
                                     ip_rate=0.15,
                                     stdp_rate=0.005,
                                     assign_weight=True,
-                                    spk_force=True,
-                                    requires_grad=True)
+                                    requires_grad=True,
+                                    spk_force=True)
         
         # Define number of layers (will run training on all layers)
         self.layers = {'layer0':self.input_layer,
                        'layer1':self.feature_layer,
                        'layer2':self.output_layer}
+
     
     def train_model(self, train_loader):
         
@@ -143,7 +155,7 @@ class SNNTrainer(nn.Module):
         
         # Run the training for each layer, using defined parameters
         for layer in range(len(self.layers)-1):
-            
+
             # Define in and out layer
             in_layer = self.layers['layer'+str(layer)]
             out_layer = self.layers['layer'+str(layer+1)]
@@ -156,6 +168,7 @@ class SNNTrainer(nn.Module):
             for n in tqdm(range(self.epoch)):
                 mod = 0 # Used to determine the learning rate annealment
                 for images, labels in train_loader: 
+
                     # Put input images on device (CPU, CUDA)
                     images = images.to(self.device)
                     
@@ -166,14 +179,16 @@ class SNNTrainer(nn.Module):
                     # Put labels on device (CPU, CUDA)
                     labels = labels.to(self.device)
                     idx = labels/self.filter
-
+                    
                     # Layers don't include loaded input, calculate network spikes for up to training layers
                     if layer != 0:
                         spikes = bn.testSim(self.layers,layer,spikes)
                     
                     # Run one timestep of the training input to feature layer
                     bn.runSim(in_layer, out_layer, spikes, idx)
-
+                    
+                    #self.optimizer.step()
+                    
                     # Anneal the learning rate
                     if np.mod(mod,10)==0:
                         pt = pow(float(self.T-mod)/self.T,self.annl_pow)
@@ -185,16 +200,8 @@ class SNNTrainer(nn.Module):
                     out_layer.x.fill_(0.0)
                     out_layer.x_input.fill_(0.0)
             
-            # Once layers have finished training, turn off any learning
-            out_layer.eta_ip = 0
-            out_layer.eta_stdp = 0
-            out_layer.excW.requires_grad_(False)
-            out_layer.inhW.requires_grad_(False)
-            out_layer.thr.requires_grad_(False)
-            
-            torch.cuda.empty_cache()
-            gc.collect()
-        
+                torch.cuda.empty_cache()
+
     def save_model(self, model_out):    
         # save model
         torch.save(self.state_dict(), model_out)
@@ -259,7 +266,9 @@ class SNNModel(nn.Module):
             if np.argmax(tonump) == idx:
                 numcorr += 1
             idx+=1
-        pause=1
+        print(str(round((numcorr/self.number_testing_images)*100,2))+'%')
+        torch.cuda.empty_cache()
+        gc.collect()
 if __name__ == "__main__":
     # Initialize the model and image transforms
     model = SNNModel()
