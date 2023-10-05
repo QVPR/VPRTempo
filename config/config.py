@@ -8,11 +8,11 @@ from datetime import datetime
 def configure(model):
     model.dataset = 'nordland'
     model.dataset_file = './dataset/'+model.dataset+'.csv'
-    model.trainingPath = '/Users/adam/data/nordland/'
-    model.testPath = '/Users/adam/data/nordland/'
-    model.number_modules = 1
-    model.number_training_images = 100
-    model.number_testing_images = 100
+    model.trainingPath = '/home/adam/data/nordland/'
+    model.testPath = '/home/adam/data/nordland/'
+    model.number_modules = 5
+    model.number_training_images = 500
+    model.number_testing_images = 500
     model.locations = ["spring","fall"]
     model.test_locations = ["spring"]
     model.filter = 8
@@ -42,7 +42,7 @@ def configure(model):
     model.location_repeat = len(model.locations)
     model.layers =[]
     
-    model.epoch = 1
+    model.epoch = 4
     model.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     #if model.device.type == "cuda":
      #   os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
