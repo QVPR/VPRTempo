@@ -10,10 +10,10 @@ def configure(model):
     model.dataset_file = './dataset/'+model.dataset+'.csv'
     model.trainingPath = '/home/adam/data/nordland/'
     model.testPath = '/home/adam/data/nordland/'
-    model.number_modules = 10
-    model.number_training_images = 2700
-    model.number_testing_images = 2700
-    model.locations = ["spring","fall","winter"]
+    model.number_modules = 5
+    model.number_training_images = 500
+    model.number_testing_images = 500
+    model.locations = ["spring","fall"]
     model.test_locations = ["summer"]
     model.filter = 8
     model.validation = True

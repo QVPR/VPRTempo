@@ -40,12 +40,12 @@ import utils as ut
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.quantization as quantization
 
 from config import configure, image_csv, model_logger
 from dataset import CustomImageDataset, SetImageAsSpikes, ProcessImage
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from timeit import default_timer
 
 class SNNLayer(nn.Module):
     def __init__(self, previous_layer=None,dims=[0,0,0],thr_range=[0,0], 
@@ -150,17 +150,13 @@ class SNNTrainer(nn.Module):
         if self.device.type == "cuda":
             ut.dummy_bmm(self.device)
 
+        warmup_iters = 10
+        for _ in range(warmup_iters):
+            _ = next(iter(train_loader))
+
         # Run the training for each layer, using defined parameters
         for layer in range(len(self.layers)-1):
-            
-            # Start timer for layer trainins
-            start_lyr = default_timer()
-            
-            # Initialize the tqdm progress bar
-            pbar = tqdm(total=int(self.T * self.epoch),
-                        desc="Training layer "+str(layer)+" with layer "+str(layer+1),
-                        position=0)
-            
+
             # Define in and out layer (2 layers trained at a time)
             in_layer = self.layers['layer'+str(layer)]
             out_layer = self.layers['layer'+str(layer+1)]
@@ -168,6 +164,11 @@ class SNNTrainer(nn.Module):
             # Output the learning rates for annealment during training
             n_initstdp = out_layer.eta_stdp.detach() # STDP
             n_initip = out_layer.eta_ip.detach() # ITP
+
+            # Initialize the tqdm progress bar
+            pbar = tqdm(total=int(self.T * self.epoch),
+                        desc="Training layer "+str(layer)+" with layer "+str(layer+1),
+                        position=0)
             
             # Run the training for the input to feature layer for specified epochs
             for epoch in range(self.epoch):
@@ -203,18 +204,10 @@ class SNNTrainer(nn.Module):
                     out_layer.x.fill_(0.0)
                     out_layer.x_input.fill_(0.0)
                     pbar.update(1)
-            
-            # Record training time for the layer
-            end_lyr = default_timer()-start_lyr
-            
+  
             # Close the tqdm progress bar
             pbar.close()
-            
-            # Record the training time and training frequency
-            logger.info('')
-            logger.info("Training layer "+str(layer)+" with layer "+
-                        str(layer+1)+" took "+str(round(end_lyr,2))+"s")
-            logger.info('')
+            print('')
             
         # Clear the cache and garbage collect (if using cuda)
         if self.device.type == "cuda":
@@ -228,7 +221,7 @@ class SNNTrainer(nn.Module):
 class SNNModel(nn.Module):
     def __init__(self):
         super(SNNModel, self).__init__()
-        
+
         # Configure the network
         configure(self) # Sets the testing configuration
         image_csv(self) # Defines images to load
@@ -252,11 +245,51 @@ class SNNModel(nn.Module):
                        'layer1':self.feature_layer,
                        'layer2':self.output_layer}
         
+        self.is_quantized = False
+        
     def load_model(self,model_path):
         state_dict = torch.load(model_path, map_location=self.device)
         self.load_state_dict(state_dict)
         self.eval()
-    
+
+    def quantize_tensors(self):
+        if not self.is_quantized:
+            tensors_to_quantize = ["excW", "inhW", "thr"]
+
+            # Iterate over the layers
+            for layer_name, layer in self.layers.items():
+                for tensor_name in tensors_to_quantize:
+                    # Check if the tensor exists in the current layer
+                    if hasattr(layer, tensor_name):
+                        tensor = getattr(layer, tensor_name)
+
+                        # Convert nn.Parameter to regular tensor if necessary
+                        if isinstance(tensor, nn.Parameter):
+                            tensor = tensor.data
+                            # Explicitly delete the attribute
+                            delattr(layer, tensor_name)
+
+                        # If the tensor is all zeros, skip quantization
+                        if (tensor == 0).all():
+                            continue
+
+                        # Check if all values in the tensor are negative, and if so, multiply by -1
+                        if (tensor < 0).all():
+                            tensor = tensor * -1
+
+                        # Calculate the non-zero max and min of this tensor
+                        non_zero_max = tensor[tensor.nonzero(as_tuple=True)].max()
+                        non_zero_min = tensor[tensor.nonzero(as_tuple=True)].min()
+
+                        # Calculate scale based on non-zero max and min
+                        scale = (non_zero_max - non_zero_min) / 255.0
+
+                        # Now, quantize the tensor
+                        quantized_tensor = nn.quantized.Quantize(scale=scale, zero_point=0, dtype=torch.quint8)(tensor)
+                        setattr(layer, tensor_name, quantized_tensor)
+
+
+
     def forward(self, test_loader):
         
         # If using CUDA, run a dummy torch.bmm to 'spool-up' operations
@@ -265,18 +298,26 @@ class SNNModel(nn.Module):
             
         idx=0
         numcorr = 0
+
+          # If using CUDA, run a dummy torch.bmm to 'spool-up' operations
+        if self.device.type == "cuda":
+            ut.dummy_bmm(self.device)
+
+        warmup_iters = 10
+        for _ in range(warmup_iters):
+            _ = next(iter(test_loader))
         
         # Initialize the tqdm progress bar
         pbar = tqdm(total=self.number_testing_images,
                     desc="Running the test network",
                     position=0)
-        
+
         # Run test network for each individual input
         for images, labels in test_loader:
             
             # Set images to the specified device
-            images = images.to(self.device)
-            labels = labels.to(self.device)
+            #images = images.to(self.device)
+            #labels = labels.to(self.device)
             
             # Set the spikes for the input, tiling across modules if applicable
             make_spikes = SetImageAsSpikes(intensity=self.intensity,
@@ -310,7 +351,13 @@ class SNNModel(nn.Module):
 if __name__ == "__main__":
     # Initialize the model and image transforms
     model = SNNModel()
-    
+    qconfig = torch.quantization.QConfig(
+    activation=torch.quantization.FakeQuantize.with_args(observer=torch.quantization.MinMaxObserver),
+    weight=torch.quantization.default_weight_fake_quant)
+
+    model.qconfig = qconfig
+    model = quantization.prepare_qat(model)
+
     # Generate model name, check if pre-trained model exists
     model_name = ("VPRTempo"+ # main name
                   str(model.input)+ # number input neurons
@@ -351,7 +398,7 @@ if __name__ == "__main__":
         train_loader = DataLoader(train_dataset, 
                                   batch_size=model.number_modules, 
                                   shuffle=False,
-                                  num_workers=4,
+                                  num_workers=8,
                                   persistent_workers=True)
         
         # Initialize, run, and save the training model
@@ -360,9 +407,14 @@ if __name__ == "__main__":
         trainer.save_model(os.path.join('./models',model_name))
     
     with torch.no_grad():  # Disable gradient computation during testing
+        
+        model = quantization.convert(model.eval())
+        
         # Load the trained model into SNNModel()
         model.load_model(os.path.join('./models',model_name))    
-        
+        model = model.cpu()
+        model.quantize_tensors()
+
         # Define the custom testing image dataset class
         test_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
                                           img_dirs=model.testing_dirs,
@@ -375,6 +427,11 @@ if __name__ == "__main__":
         test_loader = DataLoader(test_dataset, 
                                   batch_size=1, 
                                   shuffle=False,
-                                  num_workers=4,
+                                  num_workers=8,
                                   persistent_workers=True)
         model.forward(test_loader)
+
+
+        for name, module in model.named_modules():
+            if 'quantized' in str(type(module)):
+                print(f"{name}: {type(module)} is quantized!")
