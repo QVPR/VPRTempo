@@ -36,22 +36,24 @@ sys.path.append('./dataset')
 sys.path.append('./config')
 
 import blitnet as bn
+import utils as ut
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.optim as optim
 
-from config import configure
+from config import configure, image_csv, model_logger
 from dataset import CustomImageDataset, SetImageAsSpikes, ProcessImage
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+from timeit import default_timer
 
 class SNNLayer(nn.Module):
     def __init__(self, previous_layer=None,dims=[0,0,0],thr_range=[0,0], 
                  fire_rate=[0,0],ip_rate=0,stdp_rate=0,const_inp=[0,0],p=[1,1],
-                 assign_weight=False,spk_force=False,requires_grad=False):
+                 assign_weight=False,spk_force=False):
         super(SNNLayer, self).__init__()
-        configure(self)
+        # Configure the network
+        configure(self) # Sets the testing configuration
         # Device
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         
@@ -101,13 +103,15 @@ class SNNLayer(nn.Module):
                                                        dims[2]],
                                                  num_modules=self.number_modules)
             
-            self.excW = nn.Parameter(excW, requires_grad=requires_grad)
-            self.inhW = nn.Parameter(inhW, requires_grad=requires_grad)
+            self.excW = nn.Parameter(excW)
+            self.inhW = nn.Parameter(inhW)
         
 class SNNTrainer(nn.Module):
     def __init__(self):
         super(SNNTrainer, self).__init__()
-        configure(self)
+        # Configure the network
+        configure(self) # Sets the testing configuration
+        image_csv(self) # Defines images to load
         
         # Set the device
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -124,7 +128,6 @@ class SNNTrainer(nn.Module):
                                       stdp_rate=0.005,
                                       const_inp=[0,0.1],
                                       p=[0.1,0.5],
-                                      requires_grad=True,
                                       assign_weight=True)
         
         # Set up the output layer
@@ -133,7 +136,6 @@ class SNNTrainer(nn.Module):
                                     ip_rate=0.15,
                                     stdp_rate=0.005,
                                     assign_weight=True,
-                                    requires_grad=True,
                                     spk_force=True)
         
         # Define number of layers (will run training on all layers)
@@ -142,21 +144,24 @@ class SNNTrainer(nn.Module):
                        'layer2':self.output_layer}
 
     
-    def train_model(self, train_loader):
+    def train_model(self, train_loader, logger):
         
         # If using CUDA, run a dummy torch.bmm to 'spool-up' operations
         if self.device.type == "cuda":
-            # Create some dummy tensors on CUDA
-            dummy_a = torch.randn(10, 10, device=self.device)
-            dummy_b = torch.randn(10, 10, device=self.device)
-            
-            # Perform a dummy bmm operation
-            torch.bmm(dummy_a.unsqueeze(0), dummy_b.unsqueeze(0))
-        
+            ut.dummy_bmm(self.device)
+
         # Run the training for each layer, using defined parameters
         for layer in range(len(self.layers)-1):
-
-            # Define in and out layer
+            
+            # Start timer for layer trainins
+            start_lyr = default_timer()
+            
+            # Initialize the tqdm progress bar
+            pbar = tqdm(total=int(self.T * self.epoch),
+                        desc="Training layer "+str(layer)+" with layer "+str(layer+1),
+                        position=0)
+            
+            # Define in and out layer (2 layers trained at a time)
             in_layer = self.layers['layer'+str(layer)]
             out_layer = self.layers['layer'+str(layer+1)]
             
@@ -165,7 +170,7 @@ class SNNTrainer(nn.Module):
             n_initip = out_layer.eta_ip.detach() # ITP
             
             # Run the training for the input to feature layer for specified epochs
-            for n in tqdm(range(self.epoch)):
+            for epoch in range(self.epoch):
                 mod = 0 # Used to determine the learning rate annealment
                 for images, labels in train_loader: 
 
@@ -187,8 +192,6 @@ class SNNTrainer(nn.Module):
                     # Run one timestep of the training input to feature layer
                     bn.runSim(in_layer, out_layer, spikes, idx)
                     
-                    #self.optimizer.step()
-                    
                     # Anneal the learning rate
                     if np.mod(mod,10)==0:
                         pt = pow(float(self.T-mod)/self.T,self.annl_pow)
@@ -199,9 +202,25 @@ class SNNTrainer(nn.Module):
                     # Reset x and x_input for next iteration
                     out_layer.x.fill_(0.0)
                     out_layer.x_input.fill_(0.0)
+                    pbar.update(1)
             
-                torch.cuda.empty_cache()
-
+            # Record training time for the layer
+            end_lyr = default_timer()-start_lyr
+            
+            # Close the tqdm progress bar
+            pbar.close()
+            
+            # Record the training time and training frequency
+            logger.info('')
+            logger.info("Training layer "+str(layer)+" with layer "+
+                        str(layer+1)+" took "+str(round(end_lyr,2))+"s")
+            logger.info('')
+            
+        # Clear the cache and garbage collect (if using cuda)
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
+            gc.collect()
+                
     def save_model(self, model_out):    
         # save model
         torch.save(self.state_dict(), model_out)
@@ -209,8 +228,11 @@ class SNNTrainer(nn.Module):
 class SNNModel(nn.Module):
     def __init__(self):
         super(SNNModel, self).__init__()
+        
         # Configure the network
-        configure(self) 
+        configure(self) # Sets the testing configuration
+        image_csv(self) # Defines images to load
+        model_logger(self) # Sets the logger
         
         # Set up the input layer
         self.input_layer = SNNLayer(dims=[self.number_modules,1,self.input])
@@ -239,20 +261,23 @@ class SNNModel(nn.Module):
         
         # If using CUDA, run a dummy torch.bmm to 'spool-up' operations
         if self.device.type == "cuda":
-            # Create some dummy tensors on CUDA
-            dummy_a = torch.randn(10, 10, device=self.device)
-            dummy_b = torch.randn(10, 10, device=self.device)
+            ut.dummy_bmm(self.device)
             
-            # Perform a dummy bmm operation
-            torch.bmm(dummy_a.unsqueeze(0), dummy_b.unsqueeze(0))
         idx=0
         numcorr = 0
-
+        
+        # Initialize the tqdm progress bar
+        pbar = tqdm(total=self.number_testing_images,
+                    desc="Running the test network",
+                    position=0)
+        
         # Run test network for each individual input
         for images, labels in test_loader:
+            
             # Set images to the specified device
             images = images.to(self.device)
             labels = labels.to(self.device)
+            
             # Set the spikes for the input, tiling across modules if applicable
             make_spikes = SetImageAsSpikes(intensity=self.intensity,
                                            modules=self.number_modules)
@@ -260,15 +285,28 @@ class SNNModel(nn.Module):
             
             # Run the test sim
             out = bn.testSim(self.layers,len(self.layers)-1,spikes)
+            
+            # Store output and determine if output matches GT
             tonump = np.array([])
             tonump = np.append(tonump,np.reshape(out.cpu().numpy(),
                                         [1,1,int(self.number_training_images)]))
             if np.argmax(tonump) == idx:
                 numcorr += 1
             idx+=1
-        print(str(round((numcorr/self.number_testing_images)*100,2))+'%')
-        torch.cuda.empty_cache()
-        gc.collect()
+            
+            # Update the progress bar
+            pbar.update(1)
+        
+        pbar.close()
+        model.logger.info('')
+        model.logger.info("P@100R: "+
+                     str(round((numcorr/self.number_testing_images)*100,2))+'%')
+        
+        # Clear cache and empty garbage (if applicable)
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
+            gc.collect()
+            
 if __name__ == "__main__":
     # Initialize the model and image transforms
     model = SNNModel()
@@ -286,6 +324,7 @@ if __name__ == "__main__":
         # Prompt user to retrain network if desired
         prompt = "A network with these parameters exists, re-train network? (y/n):\n"
         retrain = input(prompt)
+        print('')
         
         # Retrain network, set flag to False
         if retrain == 'y':
@@ -317,7 +356,7 @@ if __name__ == "__main__":
         
         # Initialize, run, and save the training model
         trainer = SNNTrainer()
-        trainer.train_model(train_loader)
+        trainer.train_model(train_loader,model.logger)
         trainer.save_model(os.path.join('./models',model_name))
     
     with torch.no_grad():  # Disable gradient computation during testing
