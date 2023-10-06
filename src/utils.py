@@ -37,153 +37,83 @@ import blitnet as bn
 
 from metrics import recallAtK, createPR
 from timeit import default_timer
+from os import path
 
-
-def get_patches2D(patch_size,image_pad):
+def dummy_bmm(device):
+    # Create some dummy tensors on CUDA
+    dummy_a = torch.randn(10, 10, device=device)
+    dummy_b = torch.randn(10, 10, device=device)
     
-    if patch_size[0] % 2 == 0: 
-        nrows = image_pad.shape[0] - patch_size[0] + 2
-        ncols = image_pad.shape[1] - patch_size[1] + 2
-    else:
-        nrows = image_pad.shape[0] - patch_size[0] + 1
-        ncols = image_pad.shape[1] - patch_size[1] + 1
-    patches = np.lib.stride_tricks.as_strided(image_pad , patch_size + (nrows, ncols), 
-          image_pad.strides + image_pad.strides).reshape(patch_size[0]*patch_size[1],-1)
-    
-    return patches
+    # Perform a dummy bmm operation
+    torch.bmm(dummy_a.unsqueeze(0), dummy_b.unsqueeze(0))
 
-# Run patch normalization on imported RGB images
-def patch_normalise_pad(img,patches):
-    
-    patch_size = (patches, patches)
-    patch_half_size = [int((p-1)/2) for p in patch_size ]
+def sad(self):
 
-    image_pad = np.pad(np.float64(img), patch_half_size, 'constant', 
-                                                   constant_values=np.nan)
+    print('')
+    print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+    print('Setting up Sum of Absolute Differences (SAD) calculations')    
+    print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+    print('')
 
-    nrows = img.shape[0]
-    ncols = img.shape[1]
-    patches = get_patches2D(patch_size,image_pad)
-    mus = np.nanmean(patches, 0)
-    stds = np.nanstd(patches, 0)
+    sadcorrect = 0
 
-    with np.errstate(divide='ignore', invalid='ignore'):
-        im_norm = (img - mus.reshape(nrows, ncols)) / stds.reshape(nrows, ncols)
+    # load the training images
+    self.location_repeat = 1 # switch to only do SAD on one dataset traversal
+    self.fullTrainPaths = self.fullTrainPaths[1]
+    self.test_true = False # testing images preloaded, load the training ones
+    # load the training images
+    self.imgs['training'], self.ids['training'] = ut.loadImages(self.test_true,
+                                        self.fullTrainPaths,
+                                        self.filteredNames,
+                                        [self.imWidth,self.imHeight],
+                                        self.num_patches,
+                                        self.testPath,
+                                        self.test_location)
 
-    im_norm[np.isnan(im_norm)] = 0.0
-    im_norm[im_norm < -1.0] = -1.0
-    im_norm[im_norm > 1.0] = 1.0
-    
-    return im_norm
+    # create database tensor
+    for ndx, n in enumerate(self.imgs['training']):
+        if ndx == 0:
+            db = torch.unsqueeze(n,0)
+        else:
+            db = torch.concat((db,torch.unsqueeze(n,0)),0)
 
-# Process the loaded images - resize, normalize color, & patch normalize
-def processImage(img,dims,patches):
-    # gamma correct images
-    mid = 0.5
-    mean = np.mean(img)
-    gamma = math.log(mid*255)/math.log(mean)
-    img = np.power(img,gamma).clip(0,255).astype(np.uint8)
-    
-    # resize image to 28x28 and patch normalize        
-    img = cv2.resize(img,(dims[0], dims[1]))
-    im_norm = patch_normalise_pad(img,patches) 
-    img = np.uint8(255.0 * (1 + im_norm) / 2.0)
+    def calc_sad(query, database, const):
 
-    return img
+        SAD = torch.sum(torch.abs(torch.sub((database * const), (query * const))),
+                        (1,2),keepdim=True)
+        for n in range(2):
+            SAD = torch.squeeze(SAD,-1)
+        return SAD
 
-# Image loader function - runs all image import functions
-def loadImages(test_true,train_paths,img_names,dims,patches,testPath,testLoc):
-    
-    # get torch device
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu") 
-    
-    imgs = []
-    ids = []
+    # calculate SAD for each image to database and count correct number
+    imgred = 1/(self.imWidth*self.imHeight)
+    sad_concat = []
+    print('Running SAD')
 
-    if test_true:
-        train_paths = [testPath+testLoc+'/']
-    
-    if isinstance(train_paths,list):
-        for paths in train_paths:
-            for m in img_names:
-                fullpath = paths+m
-                # read and convert image from BGR to RGB 
-                img = cv2.imread(fullpath)[:,:,::-1]
-
-                # convert image
-                img = cv2.cvtColor(img,cv2.COLOR_RGB2GRAY)
-                imgProc = processImage(img,dims,patches)
-                imgs.append(torch.tensor(imgProc,device=device))
-                ids.append(m)
-    else:
-        for m in img_names:
-            fullpath = train_paths+m
-            # read and convert image from BGR to RGB 
-            img = cv2.imread(fullpath)[:,:,::-1]
-            # convert image
-            img = cv2.cvtColor(img,cv2.COLOR_RGB2GRAY)
-            imgProc = processImage(img,dims,patches)
-            imgs.append(torch.tensor(imgProc,device=device))
-            ids.append(m)
-    
-    return imgs, ids
-             
-# sets the spike rates from imported images - convert pixel range [0,255] to [0,1]
-# spike rates are set as a 3D tensor with dimensions (m x r x s)
-# m = module
-# r = location repeat
-# s = spikes for number of training images
-def setSpikeRates(data,ids,device,dims,test_true,numImgs,numMods,intensity,locRep):   
-    
-     # output tensor dimensions
-     n_input = dims[0] * dims[1]
-     
-     # Set the spike rates based on the number of example training images
-     
-     # loop through data and append spike rates for each image
-     # organise into 3D tensor based on number of expert modules
-     if test_true: # if loading testing data (repeat input across modules)
-         init_rates = torch.empty(0,device=device) 
-         for m in range(numImgs):
-
-             init_rates = torch.cat((init_rates, torch.reshape(data[m]/intensity,(n_input,)))) 
-             
-         init_rates = torch.unsqueeze(init_rates,0)    
-         # define the initial spike rates
-         for o in range(numMods):
-             if o == 0:
-                 spike_rates = torch.unsqueeze(init_rates,0)
-             else:
-                 spike_rates = torch.concat((spike_rates,torch.unsqueeze(init_rates,0)),0)
-
-                        
-     else: # if loading training data, have separate inputs across modules
-        for o in range(numMods):
-            start = []
-            end = []
-            for j in range(locRep):
-                mod = j * numImgs
-                start.append(int(numImgs/numMods)*(o) + mod)
-                end.append(int(numImgs/numMods)*(o + 1) + mod)
-
-            # define the initial spike rates for location repeats
-            for m in range(locRep):
-                rates = torch.empty(0,device=device)
-                for jdx, j in enumerate(range(start[m],end[m])):    
-                    rates = torch.cat((rates,
-                               torch.reshape(data[j]/intensity,(n_input,))),0)  
-                if m == 0:
-                    init_rates = torch.unsqueeze(rates,0)
-                else:
-                    init_rates = torch.cat((init_rates,torch.unsqueeze(rates,0)),-1)
-            
-            # output spike rates into modules
-            if o == 0: # append the location repeat initial spikes to a new module
-                spike_rates = torch.unsqueeze(init_rates,0)
+    start = timeit.default_timer()
+    for n, q in enumerate(self.imgs['testing']):
+        pixels = torch.empty([])
+         # create 3D tensor of query images
+        for o in range(self.number_testing_images):
+            if o == 0:
+                pixels = torch.unsqueeze(q,0)
             else:
-                spike_rates = torch.concat((spike_rates,torch.unsqueeze(init_rates,0)),0)
-     
-     return spike_rates
+                pixels = torch.concat((pixels,torch.unsqueeze(q,0)),0)
+
+        sad_score = calc_sad(pixels, db, imgred)
+
+        best_match = np.argmin(sad_score.cpu().numpy())
+        if n == best_match:
+            sadcorrect += 1
+
+    end = timeit.default_timer()   
+    p100r = round((sadcorrect/self.number_testing_images)*100,2)
+    print('')
+    print('Sum of absolute differences P@1: '+
+          str(p100r)+'%')
+    print('Sum of absolute differences queried at '
+          +str(round(self.number_testing_images/(end-start),2))+'Hz')
+
 
 # plot similarity matrices
 def plot_similarity(mat, name, cmap, ax=None, dpi=600):
