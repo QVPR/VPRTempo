@@ -96,10 +96,12 @@ def addWeights(W_range=[-1,0,1],p=[1,1],dims=None,num_modules=1):
         
     return excW, inhW, havconnExc, havconnInh
 
-def calc_spikes(post_layer, spikes):  
-    
+def add_input(post_layer):
+
     # Add the constant input
     post_layer.x_input += post_layer.const_inp
+
+def calc_spikes(post_layer, spikes):  
     
     # Multiply input spikes by positive and negative weights
     post_layer.x_input += torch.bmm(spikes, post_layer.excW.detach())
@@ -197,6 +199,7 @@ def norm_inhib(post_layer):
 def runSim(pre_layer,post_layer,spikes,idx):
 
     # Propagate spikes from pre to post neurons
+    add_input(post_layer)
     calc_spikes(post_layer,spikes)
 
     # Calculate STDP weight changes
