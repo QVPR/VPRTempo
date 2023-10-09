@@ -10,9 +10,9 @@ def configure(model):
     model.dataset_file = './dataset/'+model.dataset+'.csv'
     model.trainingPath = '/home/adam/data/nordland/'
     model.testPath = '/home/adam/data/nordland/'
-    model.number_modules = 5
-    model.number_training_images = 500
-    model.number_testing_images = 500
+    model.number_modules = 1
+    model.number_training_images = 10
+    model.number_testing_images = 10
     model.locations = ["spring","fall"]
     model.test_locations = ["summer"]
     model.filter = 8
@@ -43,7 +43,8 @@ def configure(model):
     model.location_repeat = len(model.locations)
     model.layers = []
     
-    model.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    #model.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    model.device = torch.device("cpu")
     if model.device.type == "cuda":
         torch.cuda.init()
         torch.cuda.synchronize(device=model.device)
@@ -71,6 +72,8 @@ def model_logger(model):
     os.mkdir(model.output_folder)
     
     model.logger = logging.getLogger("VPRTempo")
+    if (model.logger.hasHandlers()):
+        model.logger.handlers.clear()
     model.logger.setLevel(logging.DEBUG)
     logging.basicConfig(filename=model.output_folder + "/logfile.log",
                         filemode="a+",

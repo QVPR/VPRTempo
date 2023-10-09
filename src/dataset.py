@@ -6,6 +6,7 @@ import torch
 import pandas as pd
 import numpy as np
 import torch.nn.functional as F
+import torch.quantization as tq
 
 from torchvision.io import read_image
 from torch.utils.data import Dataset
@@ -88,26 +89,34 @@ class PatchNormalisePad:
         return im_norm
 
 class SetImageAsSpikes:
-    def __init__(self,intensity=255,test=True,modules=1):
+    def __init__(self,intensity=255,test=True):
         self.intensity = intensity
         self.test = test
-        self.modules = modules
-
-    def __call__(self, img_tensor):
-        # Ensure the input is a 4D tensor (N x C x W x H)
-        if len(img_tensor.shape) == 3:
-            img_tensor = img_tensor.unsqueeze(1)
         
-        N, C, W, H = img_tensor.shape
+        self.qconfig = tq.default_qconfig
+        self.observer = tq.MinMaxObserver()
+        
+    def __call__(self, img_tensor):
+        N, W, H = img_tensor.shape
         reshaped_batch = img_tensor.view(N, 1, -1)
         
         # Divide all pixel values by 255
         normalized_batch = reshaped_batch / self.intensity
-        
+        normalized_batch = torch.squeeze(normalized_batch,0)
         # If running test, repeat input over all the modules
+        #if self.test:
+         #   normalized_batch = normalized_batch.repeat(self.modules, 1, 1)
         if self.test:
-            normalized_batch = normalized_batch.repeat(self.modules, 1, 1)
-           
+            self.observer(normalized_batch)
+            scale, zero_point = self.observer.calculate_qparams()
+            scale = float(scale)
+            zero_point = int(zero_point)
+            
+            # Quantize the image tensor
+            normalized_batch = torch.quantize_per_tensor(normalized_batch, 
+                                                        scale=scale, 
+                                                        zero_point=zero_point, 
+                                                        dtype=torch.quint8)
         return normalized_batch
 
 class ProcessImage:
@@ -142,7 +151,7 @@ class ProcessImage:
 
 class CustomImageDataset(Dataset):
     def __init__(self, annotations_file, img_dirs, transform=None, target_transform=None, 
-                 skip=1, max_samples=None, modules=1, test=True):
+                 skip=1, max_samples=None, test=True):
         self.transform = transform
         self.target_transform = target_transform
         self.skip = skip
@@ -164,34 +173,12 @@ class CustomImageDataset(Dataset):
             if test:
                 self.img_labels = img_labels
             else:
-                # Reorder images in the DataFrame
-                reordered_img_labels = self.reorder_images(img_labels, modules)
-                self.img_labels.append(reordered_img_labels)
+                self.img_labels.append(img_labels)
         
         if isinstance(self.img_labels,list):
-            # Concatenate all the reordered DataFrames
+            # Concatenate all the DataFrames
             self.img_labels = pd.concat(self.img_labels, ignore_index=True)
         
-    def reorder_images(self, img_labels, modules):
-        # Calculate the number of batches
-        num_batches = len(img_labels) // modules
-        remainder = len(img_labels) % modules
-        
-        reordered_list = []
-        for i in range(num_batches):
-            for j in range(modules):
-                idx = i + j * num_batches
-                if idx < len(img_labels):
-                    reordered_list.append(img_labels.iloc[idx])
-        
-        # If there are remaining images, append them to the reordered list
-        for i in range(remainder):
-            idx = num_batches * modules + i
-            reordered_list.append(img_labels.iloc[idx])
-        
-        # Convert reordered list of Series back to DataFrame
-        return pd.concat(reordered_list, axis=1).transpose().reset_index(drop=True)
-    
     def __len__(self):
         return len(self.img_labels)
     
