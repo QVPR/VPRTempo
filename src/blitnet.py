@@ -26,6 +26,7 @@ Imports
 import torch
 
 import torch.nn as nn
+
 import numpy as np
 
 from config import configure
@@ -138,136 +139,106 @@ class SNNLayer(nn.Module):
         W = nn.Parameter(W/nrm)
     
         return W
+        
+def add_input(layer):
+    
+    # Add the constant input
+    layer.x_input += layer.const_inp
+    
+    return layer
 
-class BLiTNET(nn.Module):
-    def __init__(self,layer=None,spikes=None,idx=None,fr=None,testCount=None,
-                 layer_lst=None):
-        super(BLiTNET, self).__init__()
+def calc_spikes(spikes, layer, adder):  
+    
+    # Use nn.Linear to perform multiplication of spikes to weights
+    layer.x_input = adder.add(layer.x_input,layer.exc(spikes))
+    layer.x_input = adder.add(layer.x_input,layer.inh(spikes))
+    
+    return layer.x_input
+
+def clamp_spikes(layer):
+    # Clamp outputs between 0 and 0.9 after subtracting thresholds from input
+    if layer.spk_force: 
+        layer.x_calc = torch.clamp(torch.sub(layer.x_input, layer.thr), min=0.0, max=0.9)
+    else: 
+        layer.x = torch.clamp(torch.sub(layer.x_input, layer.thr), min=0.0, max=0.9)
         
-        # Define the layer & spikes to be parsed through BLiTNET
-        self.layer = layer
-        self.spikes = spikes
+    return layer.x
+
+def calc_stdp(spikes, out, layer, idx, prev_layer=None):
+    # Spike Forcing has special rules to make calculated and forced spikes match
+    if layer.spk_force:
         
-        # For spike forcing, define the output idx and pre-layer fire rate
-        self.idx = idx
-        self.fr = fr
+        # Get layer dimensions
+        shape = layer.exc.weight.data.shape
         
-        # For running testing, determine number of layers to iterate through for output
-        self.testCount = testCount
-        self.layer_lst = layer_lst
-        
-    def add_input(self):
-        # Add the constant input
-        self.layer.x_input += self.layer.const_inp
-    
-    def calc_spikes(self):  
-        # Use nn.Linear to perform multiplication of spikes to weights
-        self.layer.x_input += self.layer.exc(self.spikes)
-        self.layer.x_input += self.layer.inh(self.spikes)
-        
-        # Clamp outputs between 0 and 0.9 after subtracting thresholds from input
-        if self.layer.spk_force: 
-            self.layer.x_calc = torch.clamp(torch.sub(self.layer.x_input, self.layer.thr), min=0.0, max=0.9)
-        else: 
-            self.layer.x = torch.clamp(torch.sub(self.layer.x_input, self.layer.thr), min=0.0, max=0.9)
-    
-    def calc_stdp(self):
-        # Spike Forcing has special rules to make calculated and forced spikes match
-        if self.layer.spk_force:
-            
-            # Get layer dimensions
-            shape = self.layer.exc.weight.data.shape
-            
-            # Get the output neuron index
-            idx_sel = torch.arange(int(self.idx[0]), int(self.idx[0]) + 1, 
-                                   device=self.layer.device, 
-                                   dtype=int)
-    
-            # Difference between forced and calculated spikes
-            self.layer.x = torch.full_like(self.layer.x, 0)
-            xdiff = torch.clamp(self.layer.x.index_fill_(-1, idx_sel, 0.5) - self.layer.x_calc, min=0, max=1)
-    
-            # Threshold rules - lower it if calced spike is smaller (and vice versa)
-            self.layer.thr.data -= torch.sign(xdiff) * torch.abs(self.layer.eta_stdp) / 10
-            self.layer.thr.data -= torch.sign(xdiff) * torch.abs((self.layer.eta_stdp * -1)) / 10
-            self.layer.thr.data = self.layer.thr.data.clamp(min=0, max=1)
-    
-            # Pre and Post spikes tiled across and down for all synapses
-            if self.fr == None:
-                mpre = self.spikes
-            else:
-                # Modulate learning rate by firing rate (low firing rate = high learning rate)
-                mpre = self.spikes/self.fr
-                
-            # Tile out pre- and post- spikes for STDP weight updates    
-            pre = torch.tile(torch.reshape(mpre, (shape[1], 1)), (1, shape[0]))
-            post = torch.tile(xdiff, (shape[1], 1))
-    
-            # Apply the weight changes
-            self.layer.exc.weight.data += ((pre * post * self.layer.havconnExc.T) * 
-                                           self.layer.eta_stdp).T
-            self.layer.inh.weight.data += ((-pre * post * self.layer.havconnInh.T) * 
-                                           (self.layer.eta_stdp * -1)).T
-    
-        # Normal STDP
+        # Get the output neuron index
+        idx_sel = torch.arange(int(idx[0]), int(idx[0]) + 1, 
+                               device=layer.device, 
+                               dtype=int)
+
+        # Difference between forced and calculated spikes
+        layer.x = torch.full_like(layer.x, 0)
+        xdiff = torch.clamp(layer.x.index_fill_(-1, idx_sel, 0.5) - layer.x_calc, min=0, max=1)
+
+        # Threshold rules - lower it if calced spike is smaller (and vice versa)
+        layer.thr.data -= torch.sign(xdiff) * torch.abs(layer.eta_stdp) / 10
+        layer.thr.data -= torch.sign(xdiff) * torch.abs((layer.eta_stdp * -1)) / 10
+        layer.thr.data = layer.thr.data.clamp(min=0, max=1)
+
+        # Pre and Post spikes tiled across and down for all synapses
+        if prev_layer.fire_rate == None:
+            mpre = spikes
         else:
+            # Modulate learning rate by firing rate (low firing rate = high learning rate)
+            mpre = spikes/prev_layer.fire_rate
             
-            # Get layer dimensions
-            shape = self.layer.exc.weight.data.shape
-            
-            # Tile out pre- and post-spikes
-            pre = torch.tile(torch.reshape(self.spikes, (shape[1], 1)), (1, shape[0]))
-            post = torch.tile(self.layer.x, (shape[1], 1))
-            
-            # Apply positive and negative weight changes
-            self.layer.exc.weight.data += (((0.5 - post) * (pre > 0) * (post > 0) * 
-                                      self.layer.havconnExc.T) * self.layer.eta_stdp).T
-            self.layer.inh.weight.data += (((0.5 - post) * (pre > 0) * 
-                                      (post > 0) * self.layer.havconnInh.T) * (self.layer.eta_stdp * -1)).T
-    
-        # In-place clamp for excitatory and inhibitory weights
-        self.layer.exc.weight.data[self.layer.exc.weight.data < 0] = 1e-06
-        self.layer.inh.weight.data[self.layer.inh.weight.data > 0] = -1e-06
-        
-        # Remove negative weights for excW and positive for inhW
-        self.layer.exc.weight.data[self.layer.havconnExc] = self.layer.exc.weight.data[self.layer.havconnExc].clamp(min=1e-06, max=10)
-        self.layer.inh.weight.data[self.layer.havconnInh] = self.layer.inh.weight.data[self.layer.havconnInh].clamp(min=-10, max=-1e-06)
-     
-        # Check if layer has target firing rate and an ITP learning rate
-        if self.layer.have_rate and self.layer.eta_ip > 0.0:
-            
-            # Replace the original layer.thr with the updated one
-            self.layer.thr.data += self.layer.eta_ip * (self.layer.x - self.layer.fire_rate)
-            self.layer.thr.data[self.layer.thr.data < 0] = 0
-        
-        # Check if layer has inhibitory weights and an stdp learning rate
-        if torch.any(self.layer.inh.weight.data).item() and self.layer.eta_stdp != 0:
-            
-            # Normalize the inhibitory weights using homeostasis
-            inhW = self.layer.inh.weight.data.T
-            self.layer.inh.weight.data += (torch.mul(self.layer.x_input,inhW) * self.layer.eta_stdp*50).T
-            self.layer.inh.weight.data[self.layer.inh.weight.data > 0.0] = -1e-06       
+        # Tile out pre- and post- spikes for STDP weight updates    
+        pre = torch.tile(torch.reshape(mpre, (shape[1], 1)), (1, shape[0]))
+        post = torch.tile(xdiff, (shape[1], 1))
 
-            
-    def runSim(self):
-    
-        # Propagate spikes from pre to post neurons
-        self.add_input()
-        self.calc_spikes()
-    
-        # Calculate STDP weight changes
-        self.calc_stdp()
+        # Apply the weight changes
+        layer.exc.weight.data += ((pre * post * layer.havconnExc.T) * 
+                                       layer.eta_stdp).T
+        layer.inh.weight.data += ((-pre * post * layer.havconnInh.T) * 
+                                       (layer.eta_stdp * -1)).T
 
-
-    def testSim(self):
+    # Normal STDP
+    else:
         
-        # run the test system through all specified layers to get an output
-        for count, layer in enumerate(self.layer_lst):
-            if count != self.testCount:
-                self.layer = self.layer_lst[layer]
-                self.layer.x.fill_(0.0)
-                self.layer.x_input.fill_(0.0)
-                self.calc_spikes()
-                self.spikes = self.layer.x
-            
-        return self.layer.x
+        # Get layer dimensions
+        shape = layer.exc.weight.data.shape
+        
+        # Tile out pre- and post-spikes
+        pre = torch.tile(torch.reshape(spikes, (shape[1], 1)), (1, shape[0]))
+        post = torch.tile(out, (shape[1], 1))
+        
+        # Apply positive and negative weight changes
+        layer.exc.weight.data += (((0.5 - post) * (pre > 0) * (post > 0) * 
+                                  layer.havconnExc.T) * layer.eta_stdp).T
+        layer.inh.weight.data += (((0.5 - post) * (pre > 0) * 
+                                  (post > 0) * layer.havconnInh.T) * (layer.eta_stdp * -1)).T
+
+    # In-place clamp for excitatory and inhibitory weights
+    layer.exc.weight.data[layer.exc.weight.data < 0] = 1e-06
+    layer.inh.weight.data[layer.inh.weight.data > 0] = -1e-06
+    
+    # Remove negative weights for excW and positive for inhW
+    layer.exc.weight.data[layer.havconnExc] = layer.exc.weight.data[layer.havconnExc].clamp(min=1e-06, max=10)
+    layer.inh.weight.data[layer.havconnInh] = layer.inh.weight.data[layer.havconnInh].clamp(min=-10, max=-1e-06)
+ 
+    # Check if layer has target firing rate and an ITP learning rate
+    if layer.have_rate and layer.eta_ip > 0.0:
+        
+        # Replace the original layer.thr with the updated one
+        layer.thr.data += layer.eta_ip * (layer.x - layer.fire_rate)
+        layer.thr.data[layer.thr.data < 0] = 0
+    
+    # Check if layer has inhibitory weights and an stdp learning rate
+    if torch.any(layer.inh.weight.data).item() and layer.eta_stdp != 0:
+        
+        # Normalize the inhibitory weights using homeostasis
+        inhW = layer.inh.weight.data.T
+        layer.inh.weight.data += (torch.mul(layer.x_input,inhW) * layer.eta_stdp*50).T
+        layer.inh.weight.data[layer.inh.weight.data > 0.0] = -1e-06       
+
+    return layer

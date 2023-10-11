@@ -89,35 +89,41 @@ class PatchNormalisePad:
         return im_norm
 
 class SetImageAsSpikes:
-    def __init__(self,intensity=255,test=True):
+    def __init__(self, intensity=255, test=True):
         self.intensity = intensity
-        self.test = test
         
-        self.qconfig = tq.default_qconfig
-        self.observer = tq.MinMaxObserver()
+        # Setup QAT FakeQuantize for the activations (your spikes)
+        self.fake_quantize = torch.quantization.FakeQuantize(
+            observer=torch.quantization.MovingAverageMinMaxObserver, 
+            quant_min=0, 
+            quant_max=255, 
+            dtype=torch.quint8, 
+            qscheme=torch.per_tensor_affine, 
+            reduce_range=False
+        )
         
+    def train(self):
+        self.fake_quantize.train()
+
+    def eval(self):
+        self.fake_quantize.eval()    
+    
     def __call__(self, img_tensor):
         N, W, H = img_tensor.shape
         reshaped_batch = img_tensor.view(N, 1, -1)
         
         # Divide all pixel values by 255
         normalized_batch = reshaped_batch / self.intensity
-        normalized_batch = torch.squeeze(normalized_batch,0)
-        # If running test, repeat input over all the modules
-        #if self.test:
-         #   normalized_batch = normalized_batch.repeat(self.modules, 1, 1)
-        if self.test:
-            self.observer(normalized_batch)
-            scale, zero_point = self.observer.calculate_qparams()
-            scale = float(scale)
-            zero_point = int(zero_point)
-            
-            # Quantize the image tensor
-            normalized_batch = torch.quantize_per_tensor(normalized_batch, 
-                                                        scale=scale, 
-                                                        zero_point=zero_point, 
-                                                        dtype=torch.quint8)
-        return normalized_batch
+        normalized_batch = torch.squeeze(normalized_batch, 0)
+
+        # Apply FakeQuantize
+        spikes = self.fake_quantize(normalized_batch)
+        
+        if not self.fake_quantize.training:
+            scale, zero_point = self.fake_quantize.calculate_qparams()
+            spikes = torch.quantize_per_tensor(spikes, float(scale), int(zero_point), dtype=torch.quint8)
+
+        return spikes
 
 class ProcessImage:
     def __init__(self, dims, patches):
@@ -145,6 +151,9 @@ class ProcessImage:
         patch_normaliser = PatchNormalisePad(self.patches)
         im_norm = patch_normaliser(img) 
         img = (255.0 * (1 + im_norm) / 2.0).to(dtype=torch.uint8)
+        img = torch.unsqueeze(img,0)
+        spike_maker = SetImageAsSpikes()
+        img = spike_maker(img)
         img = torch.squeeze(img,0)
 
         return img

@@ -11,8 +11,8 @@ def configure(model):
     model.trainingPath = '/home/adam/data/nordland/'
     model.testPath = '/home/adam/data/nordland/'
     model.number_modules = 1
-    model.number_training_images = 10
-    model.number_testing_images = 10
+    model.number_training_images = 100
+    model.number_testing_images = 100
     model.locations = ["spring","fall"]
     model.test_locations = ["summer"]
     model.filter = 8
