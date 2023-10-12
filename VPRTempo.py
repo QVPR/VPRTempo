@@ -109,19 +109,19 @@ class VPRTempo(nn.Module):
         for epoch in range(self.epoch):
             mod = 0  # Used to determine the learning rate annealment, resets at each epoch
 
-            for images, labels in train_loader:
-                images, labels = images.to(self.device), labels.to(self.device)
+            for spikes, labels in train_loader:
+                spikes, labels = spikes.to(self.device), labels.to(self.device)
                 idx = labels / self.filter
                 if not prev_layer == None:
                     # Get the spikes to train the next layer
-                    prev_layer.x_input = self.forward(images,prev_layer)
-                    out = bn.clamp_spikes(prev_layer)
-                    images = out
+                    spikes = self.forward(spikes,prev_layer)
+                    spikes = bn.clamp_spikes(spikes,prev_layer)
                 # Run forward pass
-                layer = bn.add_input(layer)
-                layer.x_input = self.forward(images, layer)
-                out = bn.clamp_spikes(layer)
-                layer = bn.calc_stdp(images, out, layer, idx, prev_layer=prev_layer)
+                pre_spike = spikes.detach()
+                spikes = self.forward(spikes, layer)
+                spikes_noclp = spikes.detach()
+                spikes = bn.clamp_spikes(spikes, layer)
+                layer = bn.calc_stdp(pre_spike,spikes,spikes_noclp,layer, idx, prev_layer=prev_layer)
                 
                 # Adjust learning rates
                 layer = self._anneal_learning_rate(layer, mod, init_itp, init_stdp)
@@ -129,6 +129,11 @@ class VPRTempo(nn.Module):
                 # Reset x and x_input for next iteration
                 layer.x.fill_(0.0)
                 layer.x_input.fill_(0.0)
+                layer.x_calc.fill_(0.0)
+                if not prev_layer == None:
+                    prev_layer.x.fill_(0.0)
+                    prev_layer.x_calc.fill_(0.0)
+                    prev_layer.x_input.fill_(0.0)
                 mod += 1
                 pbar.update(1)
 
@@ -139,7 +144,6 @@ class VPRTempo(nn.Module):
             torch.cuda.empty_cache()
             gc.collect()
 
-    
     def evaluate(self, test_loader, layers=None):
         numcorr = 0
         idx = 0
@@ -148,17 +152,21 @@ class VPRTempo(nn.Module):
         pbar = tqdm(total=self.number_testing_images,
                     desc="Running the test network",
                     position=0)
-    
-        for images, labels in test_loader:
-            images = images.to(self.device)
+
+        for spikes, labels in test_loader:
+
+            spikes = spikes.to(self.device)
             labels = labels.to(self.device)
 
             for layer in layers:
-                images = self.forward(images, layer)
-    
-            if torch.argmax(images.reshape(1, self.number_training_images)) == idx:
+                spikes = self.forward(spikes, layer)
+                spikes = bn.clamp_spikes(spikes, layer)
+
+            topk_indices = torch.topk(spikes.reshape(1, self.number_training_images), 5).indices
+
+            if idx in topk_indices:
                 numcorr += 1
-    
+
             idx += 1
             
             pbar.update(1)
@@ -180,13 +188,12 @@ class VPRTempo(nn.Module):
         Returns:
         - Tensor: Output after processing.
         """
+        
         spikes = self.quant(spikes)
-        layer.x_input = self.quant(layer.x_input)
-        layer.x_input = bn.calc_spikes(spikes, layer, self.add)
-        layer.x_input = self.dequant(layer.x_input)
+        spikes = self.add.add(layer.exc(spikes), layer.inh(spikes))
         spikes = self.dequant(spikes)
-
-        return layer.x_input
+        
+        return spikes
     
     def save_model(self, model_out):    
         """Save the trained model to models output folder."""
@@ -236,7 +243,7 @@ def train_new_model(model, model_name, qconfig):
     trainer.to('cpu')
     trainer.feature_layer.qconfig = qconfig
     trainer.output_layer.qconfig = qconfig
-    trainer = quantization.prepare_qat(trainer, inplace=True)
+    trainer = quantization.prepare_qat(trainer, inplace=False)
     trainer.train_model(trainer.feature_layer, train_loader, model.logger)
     trainer.train_model(trainer.output_layer, train_loader, model.logger,
                         prev_layer=trainer.feature_layer)
@@ -264,14 +271,16 @@ def run_inference(model, model_name, qconfig):
     model.qconfig = torch.quantization.get_default_qat_qconfig('fbgemm')
     model.feature_layer.qconfig = qconfig
     model.output_layer.qconfig = qconfig
-    model = quantization.prepare(model, inplace=True)
+    model = quantization.prepare(model, inplace=False)
     model.load_model(os.path.join('./models', model_name))
-    model = quantization.convert(model, inplace=True)
+    model = quantization.convert(model, inplace=False)
 
     # Use evaluate method for inference accuracy
     model.evaluate(test_loader,
                    layers=[model.feature_layer, model.output_layer]
                    )
+    
+    
 
 if __name__ == "__main__":
     # Temporary place holder for now, weird multiprocessing bug with larger models
@@ -285,6 +294,7 @@ if __name__ == "__main__":
     use_pretrained = check_pretrained_model(model_name)
     
     if not use_pretrained:
-        train_new_model(model, model_name, qconfig)
+        with torch.no_grad():
+            train_new_model(model, model_name, qconfig)
     with torch.no_grad():    
-        run_inference(model, model_name, qconfig)   
+        run_inference(model, model_name, qconfig)      
