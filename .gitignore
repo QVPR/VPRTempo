@@ -1,5 +1,3 @@
-models/
-output/
 __pycache__/
+.ipynb_checkpoints/
 src/__pycache__/
-config/__pycache__/

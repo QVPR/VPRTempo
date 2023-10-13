@@ -30,11 +30,9 @@ import gc
 import sys
 sys.path.append('./src')
 sys.path.append('./models')
-sys.path.append('./settings')
 sys.path.append('./output')
 sys.path.append('./dataset')
-sys.path.append('./config')
-torch.multiprocessing.set_sharing_strategy("file_system")
+
 import blitnet as bn
 import utils as ut
 import numpy as np
@@ -42,8 +40,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.quantization as quantization
 
-from config import configure, image_csv, model_logger
-from dataset import CustomImageDataset, SetImageAsSpikes, ProcessImage
+from settings import configure, image_csv, model_logger
+from dataset import CustomImageDataset, ProcessImage
 from torch.utils.data import DataLoader
 from torch.ao.quantization import QuantStub, DeQuantStub
 from tqdm import tqdm
@@ -69,7 +67,9 @@ class VPRTempo(nn.Module):
         self.layer_dict = {}
         self.layer_counter = 0
 
-        # Define trainable layers here
+        """
+        Define trainable layers here
+        """
         self.add_layer(
             'feature_layer',
             dims=[self.input, self.feature],
@@ -124,57 +124,70 @@ class VPRTempo(nn.Module):
             
         return layer
 
-    def train_model(self,layer,train_loader,prev_layer=None):
+    def train_model(self, train_loader, layer, prev_layers=None):
         """
-        Train a new network model, iterating through all defined layers
+        Train a layer of the network model.
+
+        :param train_loader: Training data loader
+        :param layer: Layer to train
+        :param prev_layers: Previous layers to pass data through
         """
+
         # Initialize the tqdm progress bar
         pbar = tqdm(total=int(self.T * self.epoch),
                     desc="Training ",
                     position=0)
         
+        # Initialize the learning rates for each layer (used for annealment)
         init_itp = layer.eta_ip.detach()
         init_stdp = layer.eta_stdp.detach()
         
+        # Run training for the specified number of epochs
         for epoch in range(self.epoch):
             mod = 0  # Used to determine the learning rate annealment, resets at each epoch
-
+            # Run training for the specified number of timesteps
             for spikes, labels in train_loader:
                 spikes, labels = spikes.to(self.device), labels.to(self.device)
-                idx = labels / self.filter
-                if not prev_layer == None:
-                    # Get the spikes to train the next layer
-                    spikes = self.forward(spikes,prev_layer)
-                    spikes = bn.clamp_spikes(spikes,prev_layer)
-                # Run forward pass
-                pre_spike = spikes.detach()
-                spikes = self.forward(spikes, layer)
-                spikes_noclp = spikes.detach()
-                spikes = bn.clamp_spikes(spikes, layer)
+                idx = labels / self.filter # Set output index for spike forcing
+                # Pass through previous layers if they exist
+                if prev_layers:
+                    with torch.no_grad():
+                        for prev_layer_name in prev_layers:
+                            prev_layer = getattr(self, prev_layer_name) # Get the previous layer object
+                            spikes = self.forward(spikes, prev_layer) # Pass spikes through the previous layer
+                            spikes = bn.clamp_spikes(spikes, prev_layer) # Clamp spikes [0, 0.9]
+                else:
+                    prev_layer = None
+                # Get the output spikes from the current layer
+                pre_spike = spikes.detach() # Previous layer spikes for STDP
+                spikes = self.forward(spikes, layer) # Current layer spikes
+                spikes_noclp = spikes.detach() # Used for inhibitory homeostasis
+                spikes = bn.clamp_spikes(spikes, layer) # Clamp spikes [0, 0.9]
+                # Calculate STDP
                 layer = bn.calc_stdp(pre_spike,spikes,spikes_noclp,layer, idx, prev_layer=prev_layer)
-                
                 # Adjust learning rates
                 layer = self._anneal_learning_rate(layer, mod, init_itp, init_stdp)
-
-                # Reset x and x_input for next iteration
-                layer.x.fill_(0.0)
-                layer.x_input.fill_(0.0)
-                layer.x_calc.fill_(0.0)
-                if not prev_layer == None:
-                    prev_layer.x.fill_(0.0)
-                    prev_layer.x_calc.fill_(0.0)
-                    prev_layer.x_input.fill_(0.0)
+                # Update the annealing mod & progress bar 
                 mod += 1
                 pbar.update(1)
 
         # Close the tqdm progress bar
         pbar.close()
-    
+
+        # Free up memory
         if self.device.type == "cuda":
             torch.cuda.empty_cache()
             gc.collect()
 
     def evaluate(self, test_loader, layers=None):
+        """
+        Run the inferencing model and calculate the accuracy.
+
+        :param test_loader: Testing data loader
+        :param layers: Layers to pass data through
+        """
+
+        # Initialize the number of correct predictions
         numcorr = 0
         idx = 0
             
@@ -183,33 +196,31 @@ class VPRTempo(nn.Module):
                     desc="Running the test network",
                     position=0)
 
+        # Run inference for the specified number of timesteps
         for spikes, labels in test_loader:
+            # Set device
+            spikes, labels = spikes.to(self.device), labels.to(self.device)
+            # Pass through previous layers if they exist
+            if layers:
+                for layer_name in layers:
+                    layer = getattr(self, layer_name)
+                    spikes = self.forward(spikes, layer)
+                    spikes = bn.clamp_spikes(spikes, layer)
 
-            spikes = spikes.to(self.device)
-            labels = labels.to(self.device)
-
-            for layer in layers:
-                spikes = self.forward(spikes, layer)
-                spikes = bn.clamp_spikes(spikes, layer)
-
-            #topk_indices = torch.topk(spikes.reshape(1, self.number_training_images), 5).indices
-            
-            #print(topk_indices)
-            #if idx in topk_indices:
+            # Evaluate if the prediction is correct
             if torch.argmax(spikes.reshape(1, self.number_training_images)) == idx:
                 numcorr += 1
 
+            # Update the index and progress bar
             idx += 1
-            
             pbar.update(1)
-    
+
+        # Close the tqdm progress bar
         pbar.close()
+        # Calculate and record the accuracy
         accuracy = round((numcorr/self.number_testing_images)*100,2)
         model.logger.info("P@100R: "+ str(accuracy) + '%')
 
-        return accuracy
-
-    
     def forward(self, spikes, layer):
         """
         Compute the forward pass of the model.
@@ -228,16 +239,22 @@ class VPRTempo(nn.Module):
         return spikes
     
     def save_model(self, model_out):    
-        """Save the trained model to models output folder."""
+        """
+        Save the trained model to models output folder.
+        """
         torch.save(self.state_dict(), model_out) 
         
     def load_model(self, model_path):
-        """Load pre-trained model and set the state dictionary keys."""
+        """
+        Load pre-trained model and set the state dictionary keys.
+        """
         self.load_state_dict(torch.load(model_path, map_location=self.device),
                              strict=True)
             
 def generate_model_name(model):
-    """Generate the model name based on its parameters."""
+    """
+    Generate the model name based on its parameters.
+    """
     return ("VPRTempo" +
             str(model.input) +
             str(model.feature) +
@@ -246,7 +263,9 @@ def generate_model_name(model):
             '.pth')
 
 def check_pretrained_model(model_name):
-    """Check if a pre-trained model exists and prompt the user to retrain if desired."""
+    """
+    Check if a pre-trained model exists and prompt the user to retrain if desired.
+    """
     if os.path.exists(os.path.join('./models', model_name)):
         prompt = "A network with these parameters exists, re-train network? (y/n):\n"
         retrain = input(prompt).strip().lower()
@@ -254,7 +273,14 @@ def check_pretrained_model(model_name):
     return False
 
 def train_new_model(model, model_name, qconfig):
+    """
+    Train a new model.
 
+    :param model: Model to train
+    :param model_name: Name of the model to save after training
+    :param qconfig: Quantization configuration
+    """
+    # Initialize the image transforms and datasets
     image_transform = ProcessImage(model.dims, model.patches)
     train_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
                                        img_dirs=model.training_dirs,
@@ -262,66 +288,94 @@ def train_new_model(model, model_name, qconfig):
                                        skip=model.filter,
                                        max_samples=model.number_training_images,
                                        test=False)
+    # Initialize the data loader
     train_loader = DataLoader(train_dataset, 
                               batch_size=1, 
                               shuffle=False,
-                              num_workers=1,
+                              num_workers=8,
                               persistent_workers=True)
+    # Set the model to training mode and move to device
     model.train()
     model.to('cpu')
     model.qconfig = qconfig
-    model.feature_layer.qconfig = qconfig
-    model.output_layer.qconfig = qconfig
+
+    # Apply quantization configurations to the model
     model = quantization.prepare_qat(model, inplace=False)
-    model.train_model(model.feature_layer, train_loader)
-    model.train_model(model.output_layer, train_loader, 
-                        prev_layer=model.feature_layer)
+
+    # Keep track of trained layers to pass data through them
+    trained_layers = [] 
+
+    # Training each layer
+    for layer_name, _ in sorted(model.layer_dict.items(), key=lambda item: item[1]):
+        print(f"Training layer: {layer_name}")
+        # Retrieve the layer object
+        layer = getattr(model, layer_name)
+        # Train the layer
+        model.train_model(train_loader, layer, prev_layers=trained_layers)
+        # After training the current layer, add it to the list of trained layers
+        trained_layers.append(layer_name)
+    # Convert the model to a quantized model
     model = quantization.convert(model, inplace=False)
     model.eval()
+    # Save the model
     model.save_model(os.path.join('./models', model_name))    
-    
-    return model
 
 def run_inference(model, model_name, qconfig):
+    """
+    Run inference on a pre-trained model.
 
+    :param model: Model to run inference on
+    :param model_name: Name of the model to load
+    :param qconfig: Quantization configuration
+    """
+    # Initialize the image transforms and datasets
     image_transform = ProcessImage(model.dims, model.patches)
     test_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
                                       img_dirs=model.testing_dirs,
                                       transform=image_transform,
                                       skip=model.filter,
                                       max_samples=model.number_testing_images)
+    # Initialize the data loader
     test_loader = DataLoader(test_dataset, 
                              batch_size=1, 
                              shuffle=False,
-                             num_workers=1,
+                             num_workers=8,
                              persistent_workers=True)
+    # Set the model to evaluation mode and set configuration
     model = VPRTempo()
     model.eval()
     model.qconfig = qconfig
-    model.feature_layer.qconfig = qconfig
-    model.output_layer.qconfig = qconfig
+
+    # Apply quantization configurations to all layers in layer_dict
+    for layer_name, _ in model.layer_dict.items():
+        getattr(model, layer_name).qconfig = qconfig
+    # Prepare and convert the model to a quantized model
     model = quantization.prepare(model, inplace=False)
     model = quantization.convert(model, inplace=False)
+    # Load the model
     model.load_model(os.path.join('./models', model_name))
 
+    # Retrieve layer names for inference
+    layer_names = list(model.layer_dict.keys())
+
     # Use evaluate method for inference accuracy
-    model.evaluate(test_loader,
-                   layers=[model.feature_layer, model.output_layer]
-                   )
+    model.evaluate(test_loader, layers=layer_names)
 
 if __name__ == "__main__":
-    # Temporary place holder for now, weird multiprocessing bug with larger models
-    torch.set_num_threads(4)
-
-    # Initialize the model and image transforms
+    # Set the number of threads for PyTorch
+    torch.set_num_threads(8)
+    # Initialize the model
     model = VPRTempo()
+    # Initialize the logger
     model.model_logger()
+    # Set the quantization configuration
     qconfig = quantization.get_default_qat_qconfig('fbgemm')
+    # Generate the model name
     model_name = generate_model_name(model)
+    # Check if a pre-trained model exists
     use_pretrained = check_pretrained_model(model_name)
-    
+    # Train or run inference based on the user's input
     if not use_pretrained:
-        with torch.no_grad():
-            model = train_new_model(model, model_name, qconfig)
+        train_new_model(model, model_name, qconfig) # Training
     with torch.no_grad():    
-        run_inference(model, model_name, qconfig)      
+        run_inference(model, model_name, qconfig) # Inference
