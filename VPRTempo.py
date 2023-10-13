@@ -34,347 +34,294 @@ sys.path.append('./settings')
 sys.path.append('./output')
 sys.path.append('./dataset')
 sys.path.append('./config')
-
+torch.multiprocessing.set_sharing_strategy("file_system")
 import blitnet as bn
 import utils as ut
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.quantization as quantization
 
 from config import configure, image_csv, model_logger
 from dataset import CustomImageDataset, SetImageAsSpikes, ProcessImage
 from torch.utils.data import DataLoader
+from torch.ao.quantization import QuantStub, DeQuantStub
 from tqdm import tqdm
-from timeit import default_timer
 
-class SNNLayer(nn.Module):
-    def __init__(self, previous_layer=None,dims=[0,0,0],thr_range=[0,0], 
-                 fire_rate=[0,0],ip_rate=0,stdp_rate=0,const_inp=[0,0],p=[1,1],
-                 assign_weight=False,spk_force=False):
-        super(SNNLayer, self).__init__()
-        # Configure the network
-        configure(self) # Sets the testing configuration
-        # Device
-        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        
-        # Check constraints etc
-        if np.isscalar(thr_range): thr_range = [thr_range, thr_range]
-        if np.isscalar(fire_rate): fire_rate = [fire_rate, fire_rate]
-        if np.isscalar(const_inp): const_inp = [const_inp, const_inp]
-        
-        # Initialize Tensors
-        self.dim = torch.tensor(dims, dtype=torch.int)
-        self.x = torch.zeros(dims, device=self.device)
-        self.x_prev = torch.zeros(dims, device=self.device)
-        self.x_calc = torch.zeros(dims, device=self.device)
-        self.x_input = torch.zeros(dims, device=self.device)
-        self.x_fastinp = torch.zeros(dims, device=self.device)
-        self.eta_ip = torch.tensor(ip_rate, device=self.device)
-        self.eta_stdp = torch.tensor(stdp_rate, device=self.device)
-        
-        # Initialize Parameters
-        self.thr = nn.Parameter(torch.zeros(dims, device=self.device).uniform_(thr_range[0], thr_range[1]))
-        self.fire_rate = torch.zeros(dims, device=self.device).uniform_(fire_rate[0], fire_rate[1])
-        
-        # Sequentially set the feature firing rates (if any)
-        if not torch.all(self.fire_rate==0).item():
-            fstep = (fire_rate[1]-fire_rate[0])/dims[-1]
-            
-            # loop through all modules and feature layer neurons
-            for x in range(self.number_modules):
-                for i in range(dims[-1]):
-                   self.fire_rate[x][:,i] = fire_rate[0]+fstep*(i+1)
-                   
-        self.have_rate = torch.any(self.fire_rate[:,:,0] > 0.0).to(self.device)
-        self.const_inp = torch.zeros(dims, device=self.device).uniform_(const_inp[0], const_inp[1])
-        self.p = p
-        self.dims = dims
-        
-        # Additional State Variables
-        self.set_spks = []
-        self.sspk_idx = 0
-        self.spikes = torch.empty([], dtype=torch.float64)
-        self.spk_force = spk_force
-        
-        # Weights (if applicable)
-        if assign_weight:
-            excW, inhW, self.havconnExc, self.havconnInh = bn.addWeights(p=self.p,
-                                                 dims=[previous_layer.dims[2],
-                                                       dims[2]],
-                                                 num_modules=self.number_modules)
-            
-            self.excW = nn.Parameter(excW)
-            self.inhW = nn.Parameter(inhW)
-        
-class SNNTrainer(nn.Module):
+class VPRTempo(nn.Module):
     def __init__(self):
-        super(SNNTrainer, self).__init__()
+        super(VPRTempo, self).__init__()
+
         # Configure the network
-        configure(self) # Sets the testing configuration
-        image_csv(self) # Defines images to load
+        configure(self)
         
-        # Set the device
-        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        
-        # Set up the input layer
-        self.input_layer = SNNLayer(dims=[self.number_modules,1,self.input])
-        
-        # Set up the feature layer
-        self.feature_layer = SNNLayer(previous_layer=self.input_layer,
-                                      dims=[self.number_modules,1,self.feature],
-                                      thr_range=[0,0.5],
-                                      fire_rate=[0.2,0.9],
-                                      ip_rate=0.15,
-                                      stdp_rate=0.005,
-                                      const_inp=[0,0.1],
-                                      p=[0.1,0.5],
-                                      assign_weight=True)
-        
-        # Set up the output layer
-        self.output_layer = SNNLayer(previous_layer=self.feature_layer,
-                                    dims=[self.number_modules,1,self.output],
-                                    ip_rate=0.15,
-                                    stdp_rate=0.005,
-                                    assign_weight=True,
-                                    spk_force=True)
-        
-        # Define number of layers (will run training on all layers)
-        self.layers = {'layer0':self.input_layer,
-                       'layer1':self.feature_layer,
-                       'layer2':self.output_layer}
+        # Define the images to load (both training and inference)
+        image_csv(self)
 
+        # Add quantization stubs for Quantization Aware Training (QAT)
+        self.quant = QuantStub()
+        self.dequant = DeQuantStub()
+        
+        # Define the add function for quantized addition
+        self.add = nn.quantized.FloatFunctional()      
+
+        # Layer dict to keep track of layer names and their order
+        self.layer_dict = {}
+        self.layer_counter = 0
+
+        # Define trainable layers here
+        self.add_layer(
+            'feature_layer',
+            dims=[self.input, self.feature],
+            thr_range=[0, 0.5],
+            fire_rate=[0.2, 0.9],
+            ip_rate=0.15,
+            stdp_rate=0.005,
+            const_inp=[0, 0.1],
+            p=[0.1, 0.5]
+        )
+        self.add_layer(
+            'output_layer',
+            dims=[self.feature, self.output],
+            ip_rate=0.15,
+            stdp_rate=0.005,
+            spk_force=True
+        )
+        
+    def add_layer(self, name, **kwargs):
+        """
+        Dynamically add a layer with given name and keyword arguments.
+        
+        :param name: Name of the layer to be added
+        :type name: str
+        :param kwargs: Hyperparameters for the layer
+        """
+        # Check for layer name duplicates
+        if name in self.layer_dict:
+            raise ValueError(f"Layer with name {name} already exists.")
+        
+        # Add a new SNNLayer with provided kwargs
+        setattr(self, name, bn.SNNLayer(**kwargs))
+        
+        # Add layer name and index to the layer_dict
+        self.layer_dict[name] = self.layer_counter
+        self.layer_counter += 1                           
+        
+    def model_logger(self):
+        """
+        Log the model configuration to the console.
+        """
+        model_logger(self)
+
+    def _anneal_learning_rate(self, layer, mod, itp, stdp):
+        """
+        Anneal the learning rate for the current layer.
+        """
+        if np.mod(mod, 100) == 0: # Modify learning rate every 100 timesteps
+            pt = pow(float(self.T - mod) / self.T, self.annl_pow)
+            layer.eta_ip = torch.mul(itp, pt) # Anneal intrinsic threshold plasticity learning rate
+            layer.eta_stdp = torch.mul(stdp, pt) # Anneal STDP learning rate
+            
+        return layer
+
+    def train_model(self,layer,train_loader,prev_layer=None):
+        """
+        Train a new network model, iterating through all defined layers
+        """
+        # Initialize the tqdm progress bar
+        pbar = tqdm(total=int(self.T * self.epoch),
+                    desc="Training ",
+                    position=0)
+        
+        init_itp = layer.eta_ip.detach()
+        init_stdp = layer.eta_stdp.detach()
+        
+        for epoch in range(self.epoch):
+            mod = 0  # Used to determine the learning rate annealment, resets at each epoch
+
+            for spikes, labels in train_loader:
+                spikes, labels = spikes.to(self.device), labels.to(self.device)
+                idx = labels / self.filter
+                if not prev_layer == None:
+                    # Get the spikes to train the next layer
+                    spikes = self.forward(spikes,prev_layer)
+                    spikes = bn.clamp_spikes(spikes,prev_layer)
+                # Run forward pass
+                pre_spike = spikes.detach()
+                spikes = self.forward(spikes, layer)
+                spikes_noclp = spikes.detach()
+                spikes = bn.clamp_spikes(spikes, layer)
+                layer = bn.calc_stdp(pre_spike,spikes,spikes_noclp,layer, idx, prev_layer=prev_layer)
+                
+                # Adjust learning rates
+                layer = self._anneal_learning_rate(layer, mod, init_itp, init_stdp)
+
+                # Reset x and x_input for next iteration
+                layer.x.fill_(0.0)
+                layer.x_input.fill_(0.0)
+                layer.x_calc.fill_(0.0)
+                if not prev_layer == None:
+                    prev_layer.x.fill_(0.0)
+                    prev_layer.x_calc.fill_(0.0)
+                    prev_layer.x_input.fill_(0.0)
+                mod += 1
+                pbar.update(1)
+
+        # Close the tqdm progress bar
+        pbar.close()
     
-    def train_model(self, train_loader, logger):
-        
-        # If using CUDA, run a dummy torch.bmm to 'spool-up' operations
-        if self.device.type == "cuda":
-            ut.dummy_bmm(self.device)
-
-        # Run the training for each layer, using defined parameters
-        for layer in range(len(self.layers)-1):
-            
-            # Start timer for layer trainins
-            start_lyr = default_timer()
-            
-            # Initialize the tqdm progress bar
-            pbar = tqdm(total=int(self.T * self.epoch),
-                        desc="Training layer "+str(layer)+" with layer "+str(layer+1),
-                        position=0)
-            
-            # Define in and out layer (2 layers trained at a time)
-            in_layer = self.layers['layer'+str(layer)]
-            out_layer = self.layers['layer'+str(layer+1)]
-            
-            # Output the learning rates for annealment during training
-            n_initstdp = out_layer.eta_stdp.detach() # STDP
-            n_initip = out_layer.eta_ip.detach() # ITP
-            
-            # Run the training for the input to feature layer for specified epochs
-            for epoch in range(self.epoch):
-                mod = 0 # Used to determine the learning rate annealment
-                for images, labels in train_loader: 
-
-                    # Put input images on device (CPU, CUDA)
-                    images = images.to(self.device)
-                    
-                    # Set spikes from input images
-                    make_spikes = SetImageAsSpikes(self.intensity, test=False)
-                    spikes = make_spikes(images)
-                    
-                    # Put labels on device (CPU, CUDA)
-                    labels = labels.to(self.device)
-                    idx = labels/self.filter
-                    
-                    # Layers don't include loaded input, calculate network spikes for up to training layers
-                    if layer != 0:
-                        spikes = bn.testSim(self.layers,layer,spikes)
-                    
-                    # Run one timestep of the training input to feature layer
-                    bn.runSim(in_layer, out_layer, spikes, idx)
-                    
-                    # Anneal the learning rate
-                    if np.mod(mod,10)==0:
-                        pt = pow(float(self.T-mod)/self.T,self.annl_pow)
-                        out_layer.eta_ip = torch.mul(n_initip,pt)
-                        out_layer.eta_stdp = torch.mul(n_initstdp,pt)
-                    mod += 1
-                    
-                    # Reset x and x_input for next iteration
-                    out_layer.x.fill_(0.0)
-                    out_layer.x_input.fill_(0.0)
-                    pbar.update(1)
-            
-            # Record training time for the layer
-            end_lyr = default_timer()-start_lyr
-            
-            # Close the tqdm progress bar
-            pbar.close()
-            
-            # Record the training time and training frequency
-            logger.info('')
-            logger.info("Training layer "+str(layer)+" with layer "+
-                        str(layer+1)+" took "+str(round(end_lyr,2))+"s")
-            logger.info('')
-            
-        # Clear the cache and garbage collect (if using cuda)
         if self.device.type == "cuda":
             torch.cuda.empty_cache()
             gc.collect()
-                
-    def save_model(self, model_out):    
-        # save model
-        torch.save(self.state_dict(), model_out)
 
-class SNNModel(nn.Module):
-    def __init__(self):
-        super(SNNModel, self).__init__()
-        
-        # Configure the network
-        configure(self) # Sets the testing configuration
-        image_csv(self) # Defines images to load
-        model_logger(self) # Sets the logger
-        
-        # Set up the input layer
-        self.input_layer = SNNLayer(dims=[self.number_modules,1,self.input])
-        
-        # Set up the feature layer
-        self.feature_layer = SNNLayer(previous_layer=self.input_layer,
-                                      dims=[self.number_modules,1,self.feature],
-                                      assign_weight=True)
-        
-        # Set up the output layer
-        self.output_layer = SNNLayer(previous_layer=self.feature_layer,
-                                    dims=[self.number_modules,1,self.output],
-                                    assign_weight=True)
-        
-        # Define number of layers (will run training on all layers)
-        self.layers = {'layer0':self.input_layer,
-                       'layer1':self.feature_layer,
-                       'layer2':self.output_layer}
-        
-    def load_model(self,model_path):
-        state_dict = torch.load(model_path, map_location=self.device)
-        self.load_state_dict(state_dict)
-        self.eval()
-    
-    def forward(self, test_loader):
-        
-        # If using CUDA, run a dummy torch.bmm to 'spool-up' operations
-        if self.device.type == "cuda":
-            ut.dummy_bmm(self.device)
-            
-        idx=0
+    def evaluate(self, test_loader, layers=None):
         numcorr = 0
-        
+        idx = 0
+            
         # Initialize the tqdm progress bar
         pbar = tqdm(total=self.number_testing_images,
                     desc="Running the test network",
                     position=0)
-        
-        # Run test network for each individual input
-        for images, labels in test_loader:
-            
-            # Set images to the specified device
-            images = images.to(self.device)
+
+        for spikes, labels in test_loader:
+
+            spikes = spikes.to(self.device)
             labels = labels.to(self.device)
+
+            for layer in layers:
+                spikes = self.forward(spikes, layer)
+                spikes = bn.clamp_spikes(spikes, layer)
+
+            #topk_indices = torch.topk(spikes.reshape(1, self.number_training_images), 5).indices
             
-            # Set the spikes for the input, tiling across modules if applicable
-            make_spikes = SetImageAsSpikes(intensity=self.intensity,
-                                           modules=self.number_modules)
-            spikes = make_spikes(images)
-            
-            # Run the test sim
-            out = bn.testSim(self.layers,len(self.layers)-1,spikes)
-            
-            # Store output and determine if output matches GT
-            tonump = np.array([])
-            tonump = np.append(tonump,np.reshape(out.cpu().numpy(),
-                                        [1,1,int(self.number_training_images)]))
-            if np.argmax(tonump) == idx:
+            #print(topk_indices)
+            #if idx in topk_indices:
+            if torch.argmax(spikes.reshape(1, self.number_training_images)) == idx:
                 numcorr += 1
-            idx+=1
+
+            idx += 1
             
-            # Update the progress bar
             pbar.update(1)
-        
+    
         pbar.close()
-        model.logger.info('')
-        model.logger.info("P@100R: "+
-                     str(round((numcorr/self.number_testing_images)*100,2))+'%')
+        accuracy = round((numcorr/self.number_testing_images)*100,2)
+        model.logger.info("P@100R: "+ str(accuracy) + '%')
+
+        return accuracy
+
+    
+    def forward(self, spikes, layer):
+        """
+        Compute the forward pass of the model.
+    
+        Parameters:
+        - spikes (Tensor): Input spikes.
+    
+        Returns:
+        - Tensor: Output after processing.
+        """
         
-        # Clear cache and empty garbage (if applicable)
-        if self.device.type == "cuda":
-            torch.cuda.empty_cache()
-            gc.collect()
+        spikes = self.quant(spikes)
+        spikes = self.add.add(layer.exc(spikes), layer.inh(spikes))
+        spikes = self.dequant(spikes)
+        
+        return spikes
+    
+    def save_model(self, model_out):    
+        """Save the trained model to models output folder."""
+        torch.save(self.state_dict(), model_out) 
+        
+    def load_model(self, model_path):
+        """Load pre-trained model and set the state dictionary keys."""
+        self.load_state_dict(torch.load(model_path, map_location=self.device),
+                             strict=True)
             
-if __name__ == "__main__":
-    # Initialize the model and image transforms
-    model = SNNModel()
-    
-    # Generate model name, check if pre-trained model exists
-    model_name = ("VPRTempo"+ # main name
-                  str(model.input)+ # number input neurons
-                  str(model.feature)+ # number feature neurons
-                  str(model.output)+ # number output neurons
-                  str(model.number_modules)+ # number of modules
-                  '.pth')
-    if os.path.exists(os.path.join('./models',model_name)):
-        pretrain_flg = True
-        
-        # Prompt user to retrain network if desired
+def generate_model_name(model):
+    """Generate the model name based on its parameters."""
+    return ("VPRTempo" +
+            str(model.input) +
+            str(model.feature) +
+            str(model.output) +
+            str(model.number_modules) +
+            '.pth')
+
+def check_pretrained_model(model_name):
+    """Check if a pre-trained model exists and prompt the user to retrain if desired."""
+    if os.path.exists(os.path.join('./models', model_name)):
         prompt = "A network with these parameters exists, re-train network? (y/n):\n"
-        retrain = input(prompt)
-        print('')
-        
-        # Retrain network, set flag to False
-        if retrain == 'y':
-            pretrain_flg = False
-    else:
-        # No pretrained model exists
-        pretrain_flg = False
+        retrain = input(prompt).strip().lower()
+        return retrain == 'n'
+    return False
+
+def train_new_model(model, model_name, qconfig):
+
+    image_transform = ProcessImage(model.dims, model.patches)
+    train_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
+                                       img_dirs=model.training_dirs,
+                                       transform=image_transform,
+                                       skip=model.filter,
+                                       max_samples=model.number_training_images,
+                                       test=False)
+    train_loader = DataLoader(train_dataset, 
+                              batch_size=1, 
+                              shuffle=False,
+                              num_workers=1,
+                              persistent_workers=True)
+    model.train()
+    model.to('cpu')
+    model.qconfig = qconfig
+    model.feature_layer.qconfig = qconfig
+    model.output_layer.qconfig = qconfig
+    model = quantization.prepare_qat(model, inplace=False)
+    model.train_model(model.feature_layer, train_loader)
+    model.train_model(model.output_layer, train_loader, 
+                        prev_layer=model.feature_layer)
+    model = quantization.convert(model, inplace=False)
+    model.eval()
+    model.save_model(os.path.join('./models', model_name))    
     
-    # Define the image transform class
-    image_transform = ProcessImage(model.dims,model.patches)
+    return model
+
+def run_inference(model, model_name, qconfig):
+
+    image_transform = ProcessImage(model.dims, model.patches)
+    test_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
+                                      img_dirs=model.testing_dirs,
+                                      transform=image_transform,
+                                      skip=model.filter,
+                                      max_samples=model.number_testing_images)
+    test_loader = DataLoader(test_dataset, 
+                             batch_size=1, 
+                             shuffle=False,
+                             num_workers=1,
+                             persistent_workers=True)
+    model = VPRTempo()
+    model.eval()
+    model.qconfig = qconfig
+    model.feature_layer.qconfig = qconfig
+    model.output_layer.qconfig = qconfig
+    model = quantization.prepare(model, inplace=False)
+    model = quantization.convert(model, inplace=False)
+    model.load_model(os.path.join('./models', model_name))
+
+    # Use evaluate method for inference accuracy
+    model.evaluate(test_loader,
+                   layers=[model.feature_layer, model.output_layer]
+                   )
+
+if __name__ == "__main__":
+    # Temporary place holder for now, weird multiprocessing bug with larger models
+    torch.set_num_threads(4)
+
+    # Initialize the model and image transforms
+    model = VPRTempo()
+    model.model_logger()
+    qconfig = quantization.get_default_qat_qconfig('fbgemm')
+    model_name = generate_model_name(model)
+    use_pretrained = check_pretrained_model(model_name)
     
-    # If no pre-existing model, train new model with set configuration
-    if not pretrain_flg:
-        # Define the custom training image dataset class
-        train_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
-                                          img_dirs=model.training_dirs,
-                                          transform=image_transform,
-                                          skip=model.filter,
-                                          max_samples=model.number_training_images,
-                                          modules=model.number_modules,
-                                          test=False)
-        
-        # Define the training dataloader class
-        train_loader = DataLoader(train_dataset, 
-                                  batch_size=model.number_modules, 
-                                  shuffle=False,
-                                  num_workers=4,
-                                  persistent_workers=True)
-        
-        # Initialize, run, and save the training model
-        trainer = SNNTrainer()
-        trainer.train_model(train_loader,model.logger)
-        trainer.save_model(os.path.join('./models',model_name))
-    
-    with torch.no_grad():  # Disable gradient computation during testing
-        # Load the trained model into SNNModel()
-        model.load_model(os.path.join('./models',model_name))    
-        
-        # Define the custom testing image dataset class
-        test_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
-                                          img_dirs=model.testing_dirs,
-                                          transform=image_transform,
-                                          skip=model.filter,
-                                          max_samples=model.number_testing_images,
-                                          modules=model.number_modules)
-        
-        # Define the testing dataloader class
-        test_loader = DataLoader(test_dataset, 
-                                  batch_size=1, 
-                                  shuffle=False,
-                                  num_workers=4,
-                                  persistent_workers=True)
-        model.forward(test_loader)
+    if not use_pretrained:
+        with torch.no_grad():
+            model = train_new_model(model, model_name, qconfig)
+    with torch.no_grad():    
+        run_inference(model, model_name, qconfig)      
