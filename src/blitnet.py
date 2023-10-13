@@ -26,16 +26,26 @@ Imports
 import torch
 
 import torch.nn as nn
-
 import numpy as np
 
-from config import configure
+from settings import configure
 
 
 class SNNLayer(nn.Module):
     def __init__(self, dims=[0,0],thr_range=[0,0],fire_rate=[0,0],ip_rate=0,
                  stdp_rate=0,const_inp=[0,0],p=[1,1],spk_force=False):
         super(SNNLayer, self).__init__()
+        """
+        dims: [input, output] dimensions of the layer
+        thr_range: [min, max] range of thresholds
+        fire_rate: [min, max] range of firing rates
+        ip_rate: learning rate for input threshold plasticity
+        stdp_rate: learning rate for stdp
+        const_inp: [min, max] range of constant input
+        p: [min, max] range of connection probabilities
+        spk_force: boolean to force spikes
+        """
+
         # Configure the network
         configure(self) # Sets the testing configuration
         # Device
@@ -49,11 +59,6 @@ class SNNLayer(nn.Module):
         
         # Initialize Tensors
         self.x = torch.zeros([1, dims[-1]], device=self.device)
-        self.x_prev = torch.zeros([1, dims[-1]], device=self.device)
-        self.x_calc = torch.zeros([1, dims[-1]], device=self.device)
-        self.x_input = torch.zeros([1, dims[-1]], device=self.device)
-        self.x_fastinp = torch.zeros([1, dims[-1]], device=self.device)
-        
         self.eta_ip = torch.tensor(ip_rate, device=self.device)
         self.eta_stdp = torch.tensor(stdp_rate, device=self.device)
         
