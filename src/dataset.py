@@ -6,6 +6,7 @@ import torch
 import pandas as pd
 import numpy as np
 import torch.nn.functional as F
+import torch.quantization as tq
 
 from torchvision.io import read_image
 from torch.utils.data import Dataset
@@ -88,27 +89,41 @@ class PatchNormalisePad:
         return im_norm
 
 class SetImageAsSpikes:
-    def __init__(self,intensity=255,test=True,modules=1):
+    def __init__(self, intensity=255, test=True):
         self.intensity = intensity
-        self.test = test
-        self.modules = modules
-
-    def __call__(self, img_tensor):
-        # Ensure the input is a 4D tensor (N x C x W x H)
-        if len(img_tensor.shape) == 3:
-            img_tensor = img_tensor.unsqueeze(1)
         
-        N, C, W, H = img_tensor.shape
+        # Setup QAT FakeQuantize for the activations (your spikes)
+        self.fake_quantize = torch.quantization.FakeQuantize(
+            observer=torch.quantization.MovingAverageMinMaxObserver, 
+            quant_min=0, 
+            quant_max=255, 
+            dtype=torch.quint8, 
+            qscheme=torch.per_tensor_affine, 
+            reduce_range=False
+        )
+        
+    def train(self):
+        self.fake_quantize.train()
+
+    def eval(self):
+        self.fake_quantize.eval()    
+    
+    def __call__(self, img_tensor):
+        N, W, H = img_tensor.shape
         reshaped_batch = img_tensor.view(N, 1, -1)
         
         # Divide all pixel values by 255
         normalized_batch = reshaped_batch / self.intensity
+        normalized_batch = torch.squeeze(normalized_batch, 0)
+
+        # Apply FakeQuantize
+        spikes = self.fake_quantize(normalized_batch)
         
-        # If running test, repeat input over all the modules
-        if self.test:
-            normalized_batch = normalized_batch.repeat(self.modules, 1, 1)
-           
-        return normalized_batch
+        if not self.fake_quantize.training:
+            scale, zero_point = self.fake_quantize.calculate_qparams()
+            spikes = torch.quantize_per_tensor(spikes, float(scale), int(zero_point), dtype=torch.quint8)
+
+        return spikes
 
 class ProcessImage:
     def __init__(self, dims, patches):
@@ -136,13 +151,16 @@ class ProcessImage:
         patch_normaliser = PatchNormalisePad(self.patches)
         im_norm = patch_normaliser(img) 
         img = (255.0 * (1 + im_norm) / 2.0).to(dtype=torch.uint8)
+        img = torch.unsqueeze(img,0)
+        spike_maker = SetImageAsSpikes()
+        img = spike_maker(img)
         img = torch.squeeze(img,0)
 
         return img
 
 class CustomImageDataset(Dataset):
     def __init__(self, annotations_file, img_dirs, transform=None, target_transform=None, 
-                 skip=1, max_samples=None, modules=1, test=True):
+                 skip=1, max_samples=None, test=True):
         self.transform = transform
         self.target_transform = target_transform
         self.skip = skip
@@ -164,34 +182,12 @@ class CustomImageDataset(Dataset):
             if test:
                 self.img_labels = img_labels
             else:
-                # Reorder images in the DataFrame
-                reordered_img_labels = self.reorder_images(img_labels, modules)
-                self.img_labels.append(reordered_img_labels)
+                self.img_labels.append(img_labels)
         
         if isinstance(self.img_labels,list):
-            # Concatenate all the reordered DataFrames
+            # Concatenate all the DataFrames
             self.img_labels = pd.concat(self.img_labels, ignore_index=True)
         
-    def reorder_images(self, img_labels, modules):
-        # Calculate the number of batches
-        num_batches = len(img_labels) // modules
-        remainder = len(img_labels) % modules
-        
-        reordered_list = []
-        for i in range(num_batches):
-            for j in range(modules):
-                idx = i + j * num_batches
-                if idx < len(img_labels):
-                    reordered_list.append(img_labels.iloc[idx])
-        
-        # If there are remaining images, append them to the reordered list
-        for i in range(remainder):
-            idx = num_batches * modules + i
-            reordered_list.append(img_labels.iloc[idx])
-        
-        # Convert reordered list of Series back to DataFrame
-        return pd.concat(reordered_list, axis=1).transpose().reset_index(drop=True)
-    
     def __len__(self):
         return len(self.img_labels)
     
