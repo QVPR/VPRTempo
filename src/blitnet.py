@@ -167,7 +167,8 @@ def calc_stdp(prespike, spikes, noclp, layer, idx, prev_layer=None):
 
         # Difference between forced and calculated spikes
         layer.x = torch.full_like(layer.x, 0)
-        xdiff = layer.x.index_fill_(-1, idx_sel, 0.5)
+        xdiff = layer.x.index_fill_(-1, idx_sel, 0.5) - spikes
+        xdiff.clamp(min=0.0, max=0.9)
 
         # Pre and Post spikes tiled across and down for all synapses
         if prev_layer.fire_rate == None:

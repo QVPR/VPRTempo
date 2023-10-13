@@ -11,8 +11,8 @@ def configure(model):
     model.trainingPath = '/home/adam/data/nordland/'
     model.testPath = '/home/adam/data/nordland/'
     model.number_modules = 1
-    model.number_training_images = 100
-    model.number_testing_images = 100
+    model.number_training_images = 250
+    model.number_testing_images = 250
     model.locations = ["spring","fall"]
     model.test_locations = ["summer"]
     model.filter = 8
@@ -39,7 +39,7 @@ def configure(model):
     model.input = int(model.dims[0]*model.dims[1])
     model.feature = int(model.input*2)
     model.output = int(model.number_training_images/model.number_modules)
-    model.intensity = 255
+    model.intensity = 1
     model.location_repeat = len(model.locations)
     model.layers = []
     
