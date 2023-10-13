@@ -58,8 +58,20 @@ class VPRTempo(nn.Module):
         # Define the images to load (both training and inference)
         image_csv(self)
 
-        # Common model architecture
-        self.feature_layer = bn.SNNLayer(
+        # Add quantization stubs for Quantization Aware Training (QAT)
+        self.quant = QuantStub()
+        self.dequant = DeQuantStub()
+        
+        # Define the add function for quantized addition
+        self.add = nn.quantized.FloatFunctional()      
+
+        # Layer dict to keep track of layer names and their order
+        self.layer_dict = {}
+        self.layer_counter = 0
+
+        # Define trainable layers here
+        self.add_layer(
+            'feature_layer',
             dims=[self.input, self.feature],
             thr_range=[0, 0.5],
             fire_rate=[0.2, 0.9],
@@ -68,36 +80,54 @@ class VPRTempo(nn.Module):
             const_inp=[0, 0.1],
             p=[0.1, 0.5]
         )
-        self.output_layer = bn.SNNLayer(
+        self.add_layer(
+            'output_layer',
             dims=[self.feature, self.output],
             ip_rate=0.15,
             stdp_rate=0.005,
             spk_force=True
         )
-        self.layers = {
-            'layer0': self.feature_layer,
-            'layer1': self.output_layer
-        }
         
-        self.quant = QuantStub()
-        self.dequant = DeQuantStub()
+    def add_layer(self, name, **kwargs):
+        """
+        Dynamically add a layer with given name and keyword arguments.
         
-        self.add = nn.quantized.FloatFunctional()
+        :param name: Name of the layer to be added
+        :type name: str
+        :param kwargs: Hyperparameters for the layer
+        """
+        # Check for layer name duplicates
+        if name in self.layer_dict:
+            raise ValueError(f"Layer with name {name} already exists.")
+        
+        # Add a new SNNLayer with provided kwargs
+        setattr(self, name, bn.SNNLayer(**kwargs))
+        
+        # Add layer name and index to the layer_dict
+        self.layer_dict[name] = self.layer_counter
+        self.layer_counter += 1                           
         
     def model_logger(self):
-        # Start the model logger
+        """
+        Log the model configuration to the console.
+        """
         model_logger(self)
 
     def _anneal_learning_rate(self, layer, mod, itp, stdp):
-        if np.mod(mod, 10) == 0:
+        """
+        Anneal the learning rate for the current layer.
+        """
+        if np.mod(mod, 100) == 0: # Modify learning rate every 100 timesteps
             pt = pow(float(self.T - mod) / self.T, self.annl_pow)
-            layer.eta_ip = torch.mul(itp, pt)
-            layer.eta_stdp = torch.mul(stdp, pt)
+            layer.eta_ip = torch.mul(itp, pt) # Anneal intrinsic threshold plasticity learning rate
+            layer.eta_stdp = torch.mul(stdp, pt) # Anneal STDP learning rate
             
         return layer
 
-    def train_model(self,layer,train_loader,logger,prev_layer=None):
-    
+    def train_model(self,layer,train_loader,prev_layer=None):
+        """
+        Train a new network model, iterating through all defined layers
+        """
         # Initialize the tqdm progress bar
         pbar = tqdm(total=int(self.T * self.epoch),
                     desc="Training ",
@@ -162,9 +192,11 @@ class VPRTempo(nn.Module):
                 spikes = self.forward(spikes, layer)
                 spikes = bn.clamp_spikes(spikes, layer)
 
-            topk_indices = torch.topk(spikes.reshape(1, self.number_training_images), 5).indices
-
-            if idx in topk_indices:
+            #topk_indices = torch.topk(spikes.reshape(1, self.number_training_images), 5).indices
+            
+            #print(topk_indices)
+            #if idx in topk_indices:
+            if torch.argmax(spikes.reshape(1, self.number_training_images)) == idx:
                 numcorr += 1
 
             idx += 1
@@ -202,8 +234,7 @@ class VPRTempo(nn.Module):
     def load_model(self, model_path):
         """Load pre-trained model and set the state dictionary keys."""
         self.load_state_dict(torch.load(model_path, map_location=self.device),
-                             strict=False)
-        self.eval()
+                             strict=True)
             
 def generate_model_name(model):
     """Generate the model name based on its parameters."""
@@ -223,9 +254,7 @@ def check_pretrained_model(model_name):
     return False
 
 def train_new_model(model, model_name, qconfig):
-    set_image_as_spikes = SetImageAsSpikes(test=False)
-    set_image_as_spikes.eval()
-    set_image_as_spikes.train()
+
     image_transform = ProcessImage(model.dims, model.patches)
     train_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
                                        img_dirs=model.training_dirs,
@@ -238,21 +267,23 @@ def train_new_model(model, model_name, qconfig):
                               shuffle=False,
                               num_workers=1,
                               persistent_workers=True)
-    trainer = VPRTempo()
-    trainer.train()
-    trainer.to('cpu')
-    trainer.feature_layer.qconfig = qconfig
-    trainer.output_layer.qconfig = qconfig
-    trainer = quantization.prepare_qat(trainer, inplace=False)
-    trainer.train_model(trainer.feature_layer, train_loader, model.logger)
-    trainer.train_model(trainer.output_layer, train_loader, model.logger,
-                        prev_layer=trainer.feature_layer)
-    trainer.eval()
-    trainer.save_model(os.path.join('./models', model_name))
+    model.train()
+    model.to('cpu')
+    model.qconfig = qconfig
+    model.feature_layer.qconfig = qconfig
+    model.output_layer.qconfig = qconfig
+    model = quantization.prepare_qat(model, inplace=False)
+    model.train_model(model.feature_layer, train_loader)
+    model.train_model(model.output_layer, train_loader, 
+                        prev_layer=model.feature_layer)
+    model = quantization.convert(model, inplace=False)
+    model.eval()
+    model.save_model(os.path.join('./models', model_name))    
+    
+    return model
 
 def run_inference(model, model_name, qconfig):
-    set_image_as_spikes = SetImageAsSpikes(test=True)
-    set_image_as_spikes.eval() 
+
     image_transform = ProcessImage(model.dims, model.patches)
     test_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
                                       img_dirs=model.testing_dirs,
@@ -264,27 +295,23 @@ def run_inference(model, model_name, qconfig):
                              shuffle=False,
                              num_workers=1,
                              persistent_workers=True)
-
     model = VPRTempo()
-    model.to('cpu')
     model.eval()
-    model.qconfig = torch.quantization.get_default_qat_qconfig('fbgemm')
+    model.qconfig = qconfig
     model.feature_layer.qconfig = qconfig
     model.output_layer.qconfig = qconfig
     model = quantization.prepare(model, inplace=False)
-    model.load_model(os.path.join('./models', model_name))
     model = quantization.convert(model, inplace=False)
+    model.load_model(os.path.join('./models', model_name))
 
     # Use evaluate method for inference accuracy
     model.evaluate(test_loader,
                    layers=[model.feature_layer, model.output_layer]
                    )
-    
-    
 
 if __name__ == "__main__":
     # Temporary place holder for now, weird multiprocessing bug with larger models
-    torch.set_num_threads(1)
+    torch.set_num_threads(4)
 
     # Initialize the model and image transforms
     model = VPRTempo()
@@ -295,6 +322,6 @@ if __name__ == "__main__":
     
     if not use_pretrained:
         with torch.no_grad():
-            train_new_model(model, model_name, qconfig)
+            model = train_new_model(model, model_name, qconfig)
     with torch.no_grad():    
         run_inference(model, model_name, qconfig)      
