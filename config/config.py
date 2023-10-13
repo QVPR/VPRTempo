@@ -10,10 +10,10 @@ def configure(model):
     model.dataset_file = './dataset/'+model.dataset+'.csv'
     model.trainingPath = '/home/adam/data/nordland/'
     model.testPath = '/home/adam/data/nordland/'
-    model.number_modules = 10
-    model.number_training_images = 2700
-    model.number_testing_images = 2700
-    model.locations = ["spring","fall","winter"]
+    model.number_modules = 1
+    model.number_training_images = 250
+    model.number_testing_images = 250
+    model.locations = ["spring","fall"]
     model.test_locations = ["summer"]
     model.filter = 8
     model.validation = True
@@ -39,11 +39,12 @@ def configure(model):
     model.input = int(model.dims[0]*model.dims[1])
     model.feature = int(model.input*2)
     model.output = int(model.number_training_images/model.number_modules)
-    model.intensity = 255
+    model.intensity = 1
     model.location_repeat = len(model.locations)
     model.layers = []
     
-    model.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    #model.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    model.device = torch.device("cpu")
     if model.device.type == "cuda":
         torch.cuda.init()
         torch.cuda.synchronize(device=model.device)
@@ -71,6 +72,8 @@ def model_logger(model):
     os.mkdir(model.output_folder)
     
     model.logger = logging.getLogger("VPRTempo")
+    if (model.logger.hasHandlers()):
+        model.logger.handlers.clear()
     model.logger.setLevel(logging.DEBUG)
     logging.basicConfig(filename=model.output_folder + "/logfile.log",
                         filemode="a+",
