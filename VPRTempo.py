@@ -363,7 +363,7 @@ def run_inference(model, model_name, qconfig):
 
 if __name__ == "__main__":
     # Set the number of threads for PyTorch
-    torch.set_num_threads(8)
+    #torch.set_num_threads(8)
     # Initialize the model
     model = VPRTempo()
     # Initialize the logger

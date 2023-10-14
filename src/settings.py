@@ -11,8 +11,8 @@ def configure(model):
     """
     model.dataset = 'nordland' # Dataset name
     model.dataset_file = './dataset/'+model.dataset+'.csv' # Dataset file (must be PyTorch Dataset  )
-    model.trainingPath = '/home/adam/data/nordland/' # Path to training images
-    model.testPath = '/home/adam/data/nordland/' # Path to testing images
+    model.trainingPath = './dataset/' # Path to training images
+    model.testPath = './dataset/' # Path to testing images
     model.number_modules = 1 # Number of expert modules (currently not implemented)
     model.number_training_images = 500 # Number of training images
     model.number_testing_images = 500 # Number of testing images
