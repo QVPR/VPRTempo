@@ -10,9 +10,9 @@ def configure(model):
     Configure the model
     """
     model.dataset = 'nordland' # Dataset name
-    model.dataset_file = './dataset/'+model.dataset+'.csv' # Dataset file (must be PyTorch Dataset  )
-    model.trainingPath = './dataset/' # Path to training images
-    model.testPath = './dataset/' # Path to testing images
+    model.dataset_file = '../dataset/'+model.dataset+'.csv' # Dataset file (must be PyTorch Dataset  )
+    model.trainingPath = '../dataset/' # Path to training images
+    model.testPath = '../dataset/' # Path to testing images
     model.number_modules = 1 # Number of expert modules (currently not implemented)
     model.number_training_images = 500 # Number of training images
     model.number_testing_images = 500 # Number of testing images
@@ -66,7 +66,7 @@ def image_csv(model):
     Load the image names from the CSV file and filter them
     """
     # Load the image names from the CSV file
-    with open(os.path.join('./dataset', model.dataset + '.csv'), mode='r', newline='', encoding='utf-8') as file:
+    with open(os.path.join('../dataset', model.dataset + '.csv'), mode='r', newline='', encoding='utf-8') as file:
         reader = csv.reader(file)
         model.imageNames = [row[0] for row in reader]
     # Remove the header
