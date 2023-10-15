@@ -34,10 +34,8 @@ sys.path.append('./output')
 sys.path.append('./dataset')
 
 import blitnet as bn
-import utils as ut
 import numpy as np
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.quantization as quantization
 
 from settings import configure, image_csv, model_logger
