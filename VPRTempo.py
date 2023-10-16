@@ -177,7 +177,7 @@ class VPRTempo(nn.Module):
             torch.cuda.empty_cache()
             gc.collect()
 
-    def evaluate(self, test_loader, layers=None):
+    def evaluate(self, model, test_loader, layers=None):
         """
         Run the inferencing model and calculate the accuracy.
 
@@ -341,6 +341,7 @@ def run_inference(model, model_name, qconfig):
                              persistent_workers=True)
     # Set the model to evaluation mode and set configuration
     model = VPRTempo()
+    model.model_logger()
     model.eval()
     model.qconfig = qconfig
 
@@ -357,7 +358,7 @@ def run_inference(model, model_name, qconfig):
     layer_names = list(model.layer_dict.keys())
 
     # Use evaluate method for inference accuracy
-    model.evaluate(test_loader, layers=layer_names)
+    model.evaluate(model, test_loader, layers=layer_names)
 
 if __name__ == "__main__":
     # Set the number of threads for PyTorch

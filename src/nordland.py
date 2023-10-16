@@ -6,7 +6,7 @@ import re
 import shutil
 import zipfile
 import sys
-sys.path.append('./VPRTempo-quant/dataset')
+sys.path.append('..//dataset')
 
 from os import walk
 
@@ -19,7 +19,7 @@ def nord_sort():
         return [ atoi(c) for c in re.split(r'(\d+)', text) ]
     
     # set the base path to the location of the downloaded Nordland datasets
-    basePath = './dataset/'
+    basePath = '../dataset/'
     assert(os.path.isdir(basePath)),"Please set the basePath to the location of the downloaded Nordland datasets"
     
     # define the subfolders of the Nordland datasets
@@ -29,7 +29,7 @@ def nord_sort():
                "summer_images_train/section1/","summer_images_train/section2/"]
     
     # set the desired output folder for unzipping and organization
-    outDir = ''
+    outDir = '../dataset/'
     assert(os.path.isdir(outDir)),"Please set the outDir to the desired output location for unzipping the Nordland datasets"
     
     # define output paths for the data
