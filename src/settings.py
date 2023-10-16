@@ -10,9 +10,9 @@ def configure(model):
     Configure the model
     """
     model.dataset = 'nordland' # Dataset name
-    model.dataset_file = '../dataset/'+model.dataset+'.csv' # Dataset file (must be PyTorch Dataset  )
-    model.trainingPath = '../dataset/' # Path to training images
-    model.testPath = '../dataset/' # Path to testing images
+    model.dataset_file = './dataset/'+model.dataset+'.csv' # Dataset file (must be PyTorch Dataset  )
+    model.trainingPath = './dataset/' # Path to training images
+    model.testPath = './dataset/' # Path to testing images
     model.number_modules = 1 # Number of expert modules (currently not implemented)
     model.number_training_images = 500 # Number of training images
     model.number_testing_images = 500 # Number of testing images
@@ -22,6 +22,26 @@ def configure(model):
     model.validation = True # Validation (maybe deprecated for now?)
     model.log = True # Log to console
     
+    # Set default paths if the provided paths are not valid directories
+    if not os.path.isdir(getattr(model, 'trainingPath', '')):
+        model.trainingPath = '../dataset/'
+
+    if not os.path.isdir(getattr(model, 'testPath', '')):
+        model.testPath = '../dataset/'
+
+    # Now, check if the dataset_file exists based on the determined paths
+    if not os.path.exists(os.path.join('./dataset', model.dataset + '.csv')):
+        model.dataset_file = os.path.join('../dataset', model.dataset + '.csv')
+    else:
+        model.dataset_file = os.path.join('./dataset', model.dataset + '.csv')
+
+    # Now, check the conditions using assert statements
+    assert (len(model.dataset) != 0), "Dataset not defined, see README.md for details on setting up images"
+    assert (os.path.isdir(model.trainingPath)), "Training path not set or path does not exist, specify for model.trainingPath"
+    assert (os.path.isdir(model.testPath)), "Test path not set or path does not exist, specify for model.testPath"
+    assert (os.path.isdir(model.trainingPath + model.locations[0])), "Images must be organized into folders based on locations, see README.md for details"
+    assert (os.path.isdir(model.testPath + model.test_locations[0])), "Images must be organized into folders based on locations, see README.md for details"
+
     # Output the training and testing directories
     model.training_dirs = []
     for n in model.locations:
@@ -29,14 +49,7 @@ def configure(model):
     model.testing_dirs = []
     for n in model.test_locations:
         model.testing_dirs.append(os.path.join(model.testPath,n))
-    
-    # Check that the dataset is defined properly
-    assert (len(model.dataset) != 0), "Dataset not defined, see README.md for details on setting up images"
-    assert (os.path.isdir(model.trainingPath)), "Training path not set or path does not exist, specify for model.trainingPath"
-    assert (os.path.isdir(model.testPath)), "Test path not set or path does not exist, specify for model.testPath"
-    assert (os.path.isdir(model.trainingPath + model.locations[0])), "Images must be organized into folders based on locations, see README.md for details"
-    assert (os.path.isdir(model.testPath + model.test_locations[0])), "Images must be organized into folders based on locations, see README.md for details"
-    
+
     # Set the model parameters
     model.epoch = 4 # Number of epochs
     model.patches = 7 # Number of patches
@@ -61,12 +74,14 @@ def configure(model):
     # Determine the total number of timesteps across training images, modules, and location repeats
     model.T = int((model.number_training_images / model.number_modules) * model.location_repeat)
 
+
 def image_csv(model):
     """
     Load the image names from the CSV file and filter them
     """
+
     # Load the image names from the CSV file
-    with open(os.path.join('../dataset', model.dataset + '.csv'), mode='r', newline='', encoding='utf-8') as file:
+    with open(model.dataset_file, mode='r', newline='', encoding='utf-8') as file:
         reader = csv.reader(file)
         model.imageNames = [row[0] for row in reader]
     # Remove the header
@@ -86,10 +101,16 @@ def model_logger(model):
     """
     Configure the model logger
     """   
-    # Create the output folder
-    now = datetime.now()
-    model.output_folder = './output/' + now.strftime("%d%m%y-%H-%M-%S")
-    os.mkdir(model.output_folder)
+    try:
+        # Create the output folder
+        now = datetime.now()
+        model.output_folder = '../output/' + now.strftime("%d%m%y-%H-%M-%S")
+        os.mkdir(model.output_folder)
+    except:
+        # Create the output folder
+        now = datetime.now()
+        model.output_folder = './output/' + now.strftime("%d%m%y-%H-%M-%S")
+        os.mkdir(model.output_folder)
     # Create the logger
     model.logger = logging.getLogger("VPRTempo")
     if (model.logger.hasHandlers()):
