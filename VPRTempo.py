@@ -75,7 +75,6 @@ class VPRTempo(nn.Module):
             fire_rate=[0.2, 0.9],
             ip_rate=0.15,
             stdp_rate=0.005,
-            const_inp=[0, 0.1],
             p=[0.1, 0.5]
         )
         self.add_layer(
@@ -132,17 +131,16 @@ class VPRTempo(nn.Module):
         """
 
         # Initialize the tqdm progress bar
-        pbar = tqdm(total=int(self.T * self.epoch),
+        pbar = tqdm(total=int(self.T),
                     desc="Training ",
                     position=0)
         
         # Initialize the learning rates for each layer (used for annealment)
         init_itp = layer.eta_ip.detach()
         init_stdp = layer.eta_stdp.detach()
-        
+        mod = 0  # Used to determine the learning rate annealment, resets at each epoch
         # Run training for the specified number of epochs
         for epoch in range(self.epoch):
-            mod = 0  # Used to determine the learning rate annealment, resets at each epoch
             # Run training for the specified number of timesteps
             for spikes, labels in train_loader:
                 spikes, labels = spikes.to(self.device), labels.to(self.device)
@@ -253,7 +251,7 @@ def generate_model_name(model):
     """
     Generate the model name based on its parameters.
     """
-    return ("VPRTempo" +
+    return ("VPRTempoQuant" +
             str(model.input) +
             str(model.feature) +
             str(model.output) +
@@ -289,7 +287,7 @@ def train_new_model(model, model_name, qconfig):
     # Initialize the data loader
     train_loader = DataLoader(train_dataset, 
                               batch_size=1, 
-                              shuffle=False,
+                              shuffle=True,
                               num_workers=8,
                               persistent_workers=True)
     # Set the model to training mode and move to device

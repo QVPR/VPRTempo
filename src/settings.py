@@ -72,7 +72,7 @@ def configure(model):
         torch.cuda.synchronize(device=model.device)
 
     # Determine the total number of timesteps across training images, modules, and location repeats
-    model.T = int((model.number_training_images / model.number_modules) * model.location_repeat)
+    model.T = int((model.number_training_images / model.number_modules) * model.location_repeat) * model.epoch
 
 
 def image_csv(model):
