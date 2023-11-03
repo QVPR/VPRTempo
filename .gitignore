@@ -1,7 +1,5 @@
 __pycache__/
 .ipynb_checkpoints/
 src/__pycache__/
-dataset/fall
-dataset/winter
-dataset/summer
-dataset/spring
+dataset/
+models/
