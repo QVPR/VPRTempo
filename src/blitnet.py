@@ -33,7 +33,7 @@ from settings import configure
 
 class SNNLayer(nn.Module):
     def __init__(self, dims=[0,0],thr_range=[0,0],fire_rate=[0,0],ip_rate=0,
-                 stdp_rate=0,const_inp=[0,0],p=[1,1],spk_force=False,device=None):
+                 stdp_rate=0,const_inp=[0,0],p=[1,1],spk_force=False,device=None,inference=False):
         super(SNNLayer, self).__init__()
         """
         dims: [input, output] dimensions of the layer
@@ -50,58 +50,65 @@ class SNNLayer(nn.Module):
         configure(self) # Sets the testing configuration
         # Device
         self.device = device
-        
-        # Check constraints etc
-        if np.isscalar(thr_range): thr_range = [thr_range, thr_range]
-        if np.isscalar(fire_rate): fire_rate = [fire_rate, fire_rate]
-        if np.isscalar(const_inp): const_inp = [const_inp, const_inp]
-        
-        # Initialize Tensors
-        self.x = torch.zeros([1, dims[-1]], device=self.device)
-        self.eta_ip = torch.tensor(ip_rate, device=self.device)
-        self.eta_stdp = torch.tensor(stdp_rate, device=self.device)
-        
-        # Initialize Parameters
-        self.thr = nn.Parameter(torch.zeros([1, dims[-1]], 
-                                            device=self.device).uniform_(thr_range[0], 
-                                                                         thr_range[1]))
-        self.fire_rate = torch.zeros([1,dims[-1]], device=self.device).uniform_(fire_rate[0], fire_rate[1])
-        
-        # Sequentially set the feature firing rates (if any)
-        if not torch.all(self.fire_rate==0).item():
-            fstep = (fire_rate[1]-fire_rate[0])/dims[-1]
+        # Add different parameters depending if trainnig or running inference model
+        if inference: # If running inference model
+            self.w = nn.Linear(dims[0], dims[1], bias=False) # Combined weight tensors
+            self.w.to(device)
+            self.thr = nn.Parameter(torch.zeros([1, dims[-1]], 
+                                                device=self.device).uniform_(thr_range[0], 
+                                                                            thr_range[1]))
+        else: # If training new model
+            # Check constraints etc
+            if np.isscalar(thr_range): thr_range = [thr_range, thr_range]
+            if np.isscalar(fire_rate): fire_rate = [fire_rate, fire_rate]
+            if np.isscalar(const_inp): const_inp = [const_inp, const_inp]
             
-            for i in range(dims[-1]):
-               self.fire_rate[:,i] = fire_rate[0]+fstep*(i+1)
-                   
-        self.have_rate = torch.any(self.fire_rate[:,0] > 0.0).to(self.device)
-        self.const_inp = torch.zeros([1, dims[-1]], device=self.device).uniform_(const_inp[0], const_inp[1])
-        self.p = p
-        self.dims = dims
+            # Initialize Tensors
+            self.x = torch.zeros([1, dims[-1]], device=self.device)
+            self.eta_ip = torch.tensor(ip_rate, device=self.device)
+            self.eta_stdp = torch.tensor(stdp_rate, device=self.device)
+            
+            # Initialize Parameters
+            self.thr = nn.Parameter(torch.zeros([1, dims[-1]], 
+                                                device=self.device).uniform_(thr_range[0], 
+                                                                            thr_range[1]))
+            self.fire_rate = torch.zeros([1,dims[-1]], device=self.device).uniform_(fire_rate[0], fire_rate[1])
+            
+            # Sequentially set the feature firing rates (if any)
+            if not torch.all(self.fire_rate==0).item():
+                fstep = (fire_rate[1]-fire_rate[0])/dims[-1]
+                
+                for i in range(dims[-1]):
+                    self.fire_rate[:,i] = fire_rate[0]+fstep*(i+1)
+                    
+            self.have_rate = torch.any(self.fire_rate[:,0] > 0.0).to(self.device)
+            self.const_inp = torch.zeros([1, dims[-1]], device=self.device).uniform_(const_inp[0], const_inp[1])
+            self.p = p
+            self.dims = dims
+            
+            # Additional State Variables
+            self.set_spks = []
+            self.sspk_idx = 0
+            self.spikes = torch.empty([], dtype=torch.float64)
+            self.spk_force = spk_force
         
-        # Additional State Variables
-        self.set_spks = []
-        self.sspk_idx = 0
-        self.spikes = torch.empty([], dtype=torch.float64)
-        self.spk_force = spk_force
-    
-        # Create the excitatory weights
-        self.exc = nn.Linear(dims[0], dims[1], bias=False)
-        self.exc.weight = self.addWeights(dims=dims,
-                                             W_range=[0,1], 
-                                             p=p[0],
-                                             device=device)
-        
-        # Create the inhibitory weights
-        self.inh = nn.Linear(dims[0], dims[1], bias=False)
-        self.inh.weight = self.addWeights(dims=dims,
-                                             W_range=[-1,0], 
-                                             p=p[-1],
-                                             device=device)
-        
-        # Output boolean reference of which neurons have connection weights
-        self.havconnExc = self.exc.weight > 0
-        self.havconnInh = self.inh.weight < 0
+            # Create the excitatory weights
+            self.exc = nn.Linear(dims[0], dims[1], bias=False)
+            self.exc.weight = self.addWeights(dims=dims,
+                                                W_range=[0,1], 
+                                                p=p[0],
+                                                device=device)
+            
+            # Create the inhibitory weights
+            self.inh = nn.Linear(dims[0], dims[1], bias=False)
+            self.inh.weight = self.addWeights(dims=dims,
+                                                W_range=[-1,0], 
+                                                p=p[-1],
+                                                device=device)
+            
+            # Output boolean reference of which neurons have connection weights
+            self.havconnExc = self.exc.weight > 0
+            self.havconnInh = self.inh.weight < 0
 
     def addWeights(self,W_range=[0,0],p=[0,0],dims=[0,0],device=None):
 

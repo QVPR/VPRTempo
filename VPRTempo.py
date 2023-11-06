@@ -63,12 +63,14 @@ class VPRTempo(nn.Module):
         self.add_layer(
             'feature_layer',
             dims=[self.input, self.feature],
-            device=self.device
+            device=self.device,
+            inference=True
         )
         self.add_layer(
             'output_layer',
             dims=[self.feature, self.output],
-            device=self.device
+            device=self.device,
+            inference=True
         )
         
     def add_layer(self, name, **kwargs):
@@ -123,13 +125,15 @@ class VPRTempo(nn.Module):
 
         # Rehsape output spikes into a similarity matrix
         out = np.reshape(np.array(out),(model.number_training_images,model.number_testing_images))
-        # Calculate and print the Recall@N
-        N = [1,5,10,15,20,25]
-        R = []
+
+        # Recall@N
+        N = [1,5,10,15,20,25] # N values to calculate
+        R = [] # Recall@N values
         # Create GT matrix
         GT = np.zeros((model.number_testing_images,model.number_training_images), dtype=int)
         for n in range(len(GT)):
             GT[n,n] = 1
+        # Calculate Recall@N
         for n in N:
             R.append(round(recallAtK(out,GThard=GT,K=n),2))
         # Print the results
@@ -149,7 +153,7 @@ class VPRTempo(nn.Module):
         - Tensor: Output after processing.
         """
         
-        spikes = layer.exc(spikes) + layer.inh(spikes)
+        spikes = layer.w(spikes)
         
         return spikes
         
@@ -158,7 +162,7 @@ class VPRTempo(nn.Module):
         Load pre-trained model and set the state dictionary keys.
         """
         self.load_state_dict(torch.load(model_path, map_location=self.device),
-                             strict=True)
+                             strict=False)
             
 def generate_model_name(model):
     """
@@ -176,7 +180,7 @@ def check_pretrained_model(model_name):
     Check if a pre-trained model exists and tell user if it does not.
     """
     if not os.path.exists(os.path.join('./models', model_name)):
-        model.logger.info("A pre-trained network does not exist: please train one using VPRTempoQuant_Trainer")
+        model.logger.info("A pre-trained network does not exist: please train one using VPRTempo_Trainer")
         pretrain = 'n'
     else:
         pretrain = 'y'
