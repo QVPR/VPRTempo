@@ -33,7 +33,7 @@ from settings import configure
 
 class SNNLayer(nn.Module):
     def __init__(self, dims=[0,0],thr_range=[0,0],fire_rate=[0,0],ip_rate=0,
-                 stdp_rate=0,const_inp=[0,0],p=[1,1],spk_force=False):
+                 stdp_rate=0,const_inp=[0,0],p=[1,1],spk_force=False,device=None):
         super(SNNLayer, self).__init__()
         """
         dims: [input, output] dimensions of the layer
@@ -49,8 +49,7 @@ class SNNLayer(nn.Module):
         # Configure the network
         configure(self) # Sets the testing configuration
         # Device
-        #self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        self.device = torch.device("cpu")
+        self.device = device
         
         # Check constraints etc
         if np.isscalar(thr_range): thr_range = [thr_range, thr_range]
@@ -90,23 +89,24 @@ class SNNLayer(nn.Module):
         self.exc = nn.Linear(dims[0], dims[1], bias=False)
         self.exc.weight = self.addWeights(dims=dims,
                                              W_range=[0,1], 
-                                             p=p[0])
+                                             p=p[0],
+                                             device=device)
         
         # Create the inhibitory weights
         self.inh = nn.Linear(dims[0], dims[1], bias=False)
         self.inh.weight = self.addWeights(dims=dims,
                                              W_range=[-1,0], 
-                                             p=p[-1])
+                                             p=p[-1],
+                                             device=device)
         
         # Output boolean reference of which neurons have connection weights
         self.havconnExc = self.exc.weight > 0
         self.havconnInh = self.inh.weight < 0
 
-    def addWeights(self,W_range=[0,0],p=[0,0],dims=[0,0]):
+    def addWeights(self,W_range=[0,0],p=[0,0],dims=[0,0],device=None):
 
-        # Get torch device
-       #device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")    
-        device = torch.device("cpu") 
+        # Get torch device  
+        device = device
     
         # Check constraints etc
         if np.isscalar(W_range): W_range = [W_range,W_range]

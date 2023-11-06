@@ -1,7 +1,6 @@
 import os
 import torch
 import logging
-import csv
 
 from datetime import datetime
 
@@ -10,17 +9,18 @@ def configure(model):
     Configure the model
     """
     model.dataset = 'nordland' # Dataset name
-    model.dataset_file = './dataset/'+model.dataset+'.csv' # Dataset file (must be PyTorch Dataset  )
+    model.dataset_file = './dataset/'+model.dataset+'.csv' # Dataset file (must be PyTorch Dataset)
     model.trainingPath = './dataset/' # Path to training images
     model.testPath = './dataset/' # Path to testing images
     model.number_modules = 1 # Number of expert modules (currently not implemented)
     model.number_training_images = 500 # Number of training images
     model.number_testing_images = 500 # Number of testing images
     model.locations = ["spring","fall"] # Locations to train on (location repeats for training datasets)
-    model.test_locations = ["summer"] # Location to query with
+    model.test_locations = ["winter"] # Location to query with
     model.filter = 8 # Filter for training images
     model.validation = True # Validation (maybe deprecated for now?)
     model.log = True # Log to console
+    model.quantize = False # Quantize the network
     
     # Set default paths if the provided paths are not valid directories
     if not os.path.isdir(getattr(model, 'trainingPath', '')):
@@ -52,8 +52,8 @@ def configure(model):
 
     # Set the model parameters
     model.epoch = 4 # Number of epochs
-    model.patches = 7 # Number of patches
-    model.dims = [28,28] # Dimensions of the input image
+    model.patches = 15 # Number of patches
+    model.dims = [56,56] # Dimensions of the input image
     model.location_repeat = len(model.locations) # Number of times to repeat the locations
     model.annl_pow = 2 # Power of the annealmeant function
 
@@ -65,8 +65,10 @@ def configure(model):
     model.output = int(model.number_training_images/model.number_modules) # Number of output neurons
     
     # Set the torch device
-    #model.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    model.device = torch.device("cpu")
+    if not model.quantize:
+        model.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    else:
+        model.device = torch.device("cpu")
     if model.device.type == "cuda":
         torch.cuda.init()
         torch.cuda.synchronize(device=model.device)
@@ -74,43 +76,18 @@ def configure(model):
     # Determine the total number of timesteps across training images, modules, and location repeats
     model.T = int((model.number_training_images / model.number_modules) * model.location_repeat) * model.epoch
 
-
-def image_csv(model):
-    """
-    Load the image names from the CSV file and filter them
-    """
-
-    # Load the image names from the CSV file
-    with open(model.dataset_file, mode='r', newline='', encoding='utf-8') as file:
-        reader = csv.reader(file)
-        model.imageNames = [row[0] for row in reader]
-    # Remove the header
-    del model.imageNames[0]
-    # Filter the image names
-    model.filteredNames = []
-    for n in range(0, len(model.imageNames), model.filter):
-        model.filteredNames.append(model.imageNames[n])
-    # Remove the training images from the filtered names
-    del model.filteredNames[model.number_training_images:len(model.filteredNames)]
-    # Store the full training paths
-    model.fullTrainPaths = []
-    for n in model.locations:
-        model.fullTrainPaths.append(model.trainingPath + n + '/')
-
 def model_logger(model): 
     """
     Configure the model logger
     """   
-    try:
-        # Create the output folder
+    if os.path.isdir('../output'):
         now = datetime.now()
         model.output_folder = '../output/' + now.strftime("%d%m%y-%H-%M-%S")
-        os.mkdir(model.output_folder)
-    except:
-        # Create the output folder
+    else:
         now = datetime.now()
         model.output_folder = './output/' + now.strftime("%d%m%y-%H-%M-%S")
-        os.mkdir(model.output_folder)
+    
+    os.mkdir(model.output_folder)
     # Create the logger
     model.logger = logging.getLogger("VPRTempo")
     if (model.logger.hasHandlers()):
@@ -139,10 +116,15 @@ def model_logger(model):
     model.logger.info('MIT license - https://github.com/QVPR/VPRTempo')
     model.logger.info('\\\\\\\\\\\\\\\\\\\\\\\\')
     model.logger.info('')
-    model.logger.info('CUDA available: ' + str(torch.cuda.is_available()))
-    if torch.cuda.is_available():
-        current_device = torch.cuda.current_device()
-        model.logger.info('Current device is: ' + str(torch.cuda.get_device_name(current_device)))
-    else:
+    if model.quantize:
+        model.logger.info('Quantization enabled')
         model.logger.info('Current device is: CPU')
+    else:
+        if torch.cuda.is_available():
+            model.logger.info('CUDA available: ' + str(torch.cuda.is_available()))
+            current_device = torch.cuda.current_device()
+            model.logger.info('Current device is: ' + str(torch.cuda.get_device_name(current_device)))
+        else:
+            model.logger.info('CUDA available: ' + str(torch.cuda.is_available()))
+            model.logger.info('Current device is: CPU')
     model.logger.info('')
