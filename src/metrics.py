@@ -149,11 +149,9 @@ def recallAtK(S_in, GThard, GTsoft=None, K=1):
 
     # ensure logical datatype in GT and GTsoft
     GT = GThard.astype('bool')
-    GTsoft = GTsoft.astype('bool')
 
     # copy S and set elements that are only true in GTsoft to min(S) to ignore them during evaluation
     S = S_in.copy()
-    S[GTsoft & ~GT] = S.min()
 
     # discard all query images without an actually matching database image
     j = GT.sum(0) > 0 # columns with matches
