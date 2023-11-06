@@ -36,10 +36,12 @@ sys.path.append('./dataset')
 import blitnet as bn
 import numpy as np
 import torch.nn as nn
+import torch.quantization as quantization
 
 from settings import configure, model_logger
 from dataset import CustomImageDataset, ProcessImage
 from torch.utils.data import DataLoader
+from torch.ao.quantization import QuantStub, DeQuantStub
 from tqdm import tqdm
 from prettytable import PrettyTable
 from metrics import recallAtK
@@ -51,7 +53,14 @@ class VPRTempo(nn.Module):
         # Configure the network
         configure(self)
 
-        model_logger(self)    
+        model_logger(self)
+
+        # Add quantization stubs for Quantization Aware Training (QAT)
+        self.quant = QuantStub()
+        self.dequant = DeQuantStub()
+        
+        # Define the add function for quantized addition
+        self.add = nn.quantized.FloatFunctional()      
 
         # Layer dict to keep track of layer names and their order
         self.layer_dict = {}
@@ -131,7 +140,7 @@ class VPRTempo(nn.Module):
         for n in range(len(GT)):
             GT[n,n] = 1
         for n in N:
-            R.append(round(recallAtK(out,GThard=GT,K=n),2))
+            R.append(recallAtK(out,GThard=GT,K=n))
         # Print the results
         table = PrettyTable()
         table.field_names = ["N", "1", "5", "10", "15", "20", "25"]
@@ -149,7 +158,9 @@ class VPRTempo(nn.Module):
         - Tensor: Output after processing.
         """
         
-        spikes = layer.exc(spikes) + layer.inh(spikes)
+        spikes = self.quant(spikes)
+        spikes = self.add.add(layer.exc(spikes), layer.inh(spikes))
+        spikes = self.dequant(spikes)
         
         return spikes
         
@@ -164,7 +175,7 @@ def generate_model_name(model):
     """
     Generate the model name based on its parameters.
     """
-    return ("VPRTempo" +
+    return ("VPRTempoQuant" +
             str(model.input) +
             str(model.feature) +
             str(model.output) +
@@ -182,7 +193,7 @@ def check_pretrained_model(model_name):
         pretrain = 'y'
     return pretrain
 
-def run_inference(model, model_name):
+def run_inference(model, model_name, qconfig):
     """
     Run inference on a pre-trained model.
 
@@ -205,7 +216,14 @@ def run_inference(model, model_name):
                              persistent_workers=True)
     # Set the model to evaluation mode and set configuration
     model.eval()
+    model.qconfig = qconfig
 
+    # Apply quantization configurations to all layers in layer_dict
+    for layer_name, _ in model.layer_dict.items():
+        getattr(model, layer_name).qconfig = qconfig
+    # Prepare and convert the model to a quantized model
+    model = quantization.prepare(model, inplace=False)
+    model = quantization.convert(model, inplace=False)
     # Load the model
     model.load_model(os.path.join('./models', model_name))
 
@@ -220,8 +238,8 @@ if __name__ == "__main__":
     #torch.set_num_threads(8)
     # Initialize the model
     model = VPRTempo()
-    if model.quantize:
-        raise ValueError("Please disable quantization to run inference.")
+    # Set the quantization configuration
+    qconfig = quantization.get_default_qat_qconfig('fbgemm')
     # Generate the model name
     model_name = generate_model_name(model)
     # Check if a pre-trained model exists
@@ -229,4 +247,4 @@ if __name__ == "__main__":
     if not use_pretrained == 'n':
         # Run inference based on the user's input
         with torch.no_grad():    
-            run_inference(model, model_name) # Inference
+            run_inference(model, model_name, qconfig) # Inference
