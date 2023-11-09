@@ -204,7 +204,7 @@ def run_inference(model, model_name):
     # Initialize the data loader
     test_loader = DataLoader(test_dataset, 
                              batch_size=1, 
-                             shuffle=False,
+                             shuffle=True,
                              num_workers=8,
                              persistent_workers=True)
     # Set the model to evaluation mode and set configuration
