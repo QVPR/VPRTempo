@@ -38,7 +38,7 @@ import numpy as np
 import torch.nn as nn
 import torch.quantization as quantization
 
-from settings import configure, model_logger
+from settings import configure, model_logger_quant
 from dataset import CustomImageDataset, ProcessImage
 from torch.utils.data import DataLoader
 from torch.ao.quantization import QuantStub, DeQuantStub
@@ -46,14 +46,14 @@ from tqdm import tqdm
 from prettytable import PrettyTable
 from metrics import recallAtK
 
-class VPRTempo(nn.Module):
+class VPRTempoQuant(nn.Module):
     def __init__(self):
-        super(VPRTempo, self).__init__()
+        super(VPRTempoQuant, self).__init__()
 
         # Configure the network
         configure(self)
 
-        model_logger(self)
+        model_logger_quant(self)
 
         # Add quantization stubs for Quantization Aware Training (QAT)
         self.quant = QuantStub()
@@ -176,7 +176,7 @@ class VPRTempo(nn.Module):
         self.load_state_dict(torch.load(model_path, map_location=self.device),
                              strict=False)
             
-def generate_model_name(model):
+def generate_model_name_quant(model):
     """
     Generate the model name based on its parameters.
     """
@@ -198,7 +198,7 @@ def check_pretrained_model(model_name):
         pretrain = 'y'
     return pretrain
 
-def run_inference(model, model_name, qconfig):
+def run_inference_quant(model, model_name, qconfig):
     """
     Run inference on a pre-trained model.
 
@@ -236,10 +236,8 @@ def run_inference(model, model_name, qconfig):
     model.evaluate(model, test_loader)
 
 if __name__ == "__main__":
-    # Set the number of threads for PyTorch
-    #torch.set_num_threads(8)
     # Initialize the model
-    model = VPRTempo()
+    model = VPRTempoQuant()
     # Set the quantization configuration
     qconfig = quantization.get_default_qat_qconfig('fbgemm')
     # Generate the model name
