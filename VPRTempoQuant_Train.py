@@ -53,10 +53,7 @@ class VPRTempo(nn.Module):
 
         # Add quantization stubs for Quantization Aware Training (QAT)
         self.quant = QuantStub()
-        self.dequant = DeQuantStub()
-        
-        # Define the add function for quantized addition
-        self.add = nn.quantized.FloatFunctional()      
+        self.dequant = DeQuantStub()   
 
         # Layer dict to keep track of layer names and their order
         self.layer_dict = {}
@@ -81,6 +78,7 @@ class VPRTempo(nn.Module):
             ip_rate=0.15,
             stdp_rate=0.005,
             spk_force=True,
+            p=[0.25, 0.75],
             device=self.device
         )
         
@@ -186,7 +184,7 @@ class VPRTempo(nn.Module):
         """
         
         spikes = self.quant(spikes)
-        spikes = self.add.add(layer.exc(spikes), layer.inh(spikes))
+        spikes = layer.w(spikes)
         spikes = self.dequant(spikes)
         
         return spikes

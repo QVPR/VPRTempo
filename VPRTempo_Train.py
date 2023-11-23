@@ -72,6 +72,7 @@ class VPRTempo(nn.Module):
             dims=[self.feature, self.output],
             ip_rate=0.15,
             stdp_rate=0.005,
+            p=[0.25, 0.75],
             spk_force=True,
             device=self.device
         )
@@ -177,25 +178,9 @@ class VPRTempo(nn.Module):
         - Tensor: Output after processing.
         """
         
-        spikes = layer.exc(spikes) + layer.inh(spikes)
+        spikes = layer.w(spikes)
         
-        return spikes
-
-    def combine_weights(self, model):
-        for layer_name, _ in sorted(model.layer_dict.items(), key=lambda item: item[1]):
-            # Retrieve the layer object
-            layer = getattr(model, layer_name)
-            dims = layer.dims
-            # Define weight variable in layer
-            layer.w = nn.Linear(dims[0],dims[1],bias=False)
-            # Send to model device
-            layer.x.to(model.device)
-            # Replace weights with combined weights
-            layer.w.weight = nn.Parameter(layer.exc.weight + layer.inh.weight)
-            # Delete original weights
-            del layer.exc, layer.inh
-
-        return model   
+        return spikes 
     
     def save_model(self, model_out):    
         """
@@ -250,10 +235,8 @@ def train_new_model(model, model_name):
                               persistent_workers=True)
     # Set the model to training mode and move to device
     model.train()
-
     # Keep track of trained layers to pass data through them
     trained_layers = [] 
-
     # Training each layer
     for layer_name, _ in sorted(model.layer_dict.items(), key=lambda item: item[1]):
         print(f"Training layer: {layer_name}")
@@ -263,8 +246,6 @@ def train_new_model(model, model_name):
         model.train_model(train_loader, layer, prev_layers=trained_layers)
         # After training the current layer, add it to the list of trained layers
         trained_layers.append(layer_name)
-    # Combine excitatory and inhibitory weights
-    model = model.combine_weights(model)
     # Convert the model to a quantized model
     model.eval()
     # Save the model

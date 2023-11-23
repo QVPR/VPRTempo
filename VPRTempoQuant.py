@@ -57,10 +57,7 @@ class VPRTempo(nn.Module):
 
         # Add quantization stubs for Quantization Aware Training (QAT)
         self.quant = QuantStub()
-        self.dequant = DeQuantStub()
-        
-        # Define the add function for quantized addition
-        self.add = nn.quantized.FloatFunctional()      
+        self.dequant = DeQuantStub() 
 
         # Layer dict to keep track of layer names and their order
         self.layer_dict = {}
@@ -72,12 +69,14 @@ class VPRTempo(nn.Module):
         self.add_layer(
             'feature_layer',
             dims=[self.input, self.feature],
-            device=self.device
+            device=self.device,
+            inference=True
         )
         self.add_layer(
             'output_layer',
             dims=[self.feature, self.output],
-            device=self.device
+            device=self.device,
+            inference=True
         )
         
     def add_layer(self, name, **kwargs):
@@ -99,13 +98,24 @@ class VPRTempo(nn.Module):
         self.layer_dict[name] = self.layer_counter
         self.layer_counter += 1                           
 
-    def evaluate(self, model, test_loader, layers=None):
+    def evaluate(self, model, test_loader):
         """
         Run the inferencing model and calculate the accuracy.
 
         :param test_loader: Testing data loader
         :param layers: Layers to pass data through
         """
+        # Determine the Hardtahn max value
+        maxSpike = 1//model.quant.scale
+        # Define the sequential inference model
+        self.inference = nn.Sequential(
+            self.feature_layer.w,
+            nn.Hardtanh(0, maxSpike),
+            nn.ReLU(),
+            self.output_layer.w,
+            nn.Hardtanh(0, maxSpike),
+            nn.ReLU()
+        )
         # Initialize the tqdm progress bar
         pbar = tqdm(total=self.number_testing_images,
                     desc="Running the test network",
@@ -117,12 +127,7 @@ class VPRTempo(nn.Module):
             # Set device
             spikes, labels = spikes.to(self.device), labels.to(self.device)
             # Pass through previous layers if they exist
-            if layers:
-                for layer_name in layers:
-                    layer = getattr(self, layer_name)
-                    spikes = self.forward(spikes, layer)
-                    spikes = bn.clamp_spikes(spikes, layer)
-
+            spikes = self.forward(spikes)
             # Add output spikes to list
             out.append(spikes.detach().cpu().tolist())
             pbar.update(1)
@@ -131,12 +136,12 @@ class VPRTempo(nn.Module):
         pbar.close()
 
         # Rehsape output spikes into a similarity matrix
-        out = np.reshape(np.array(out),(model.number_training_images,model.number_testing_images))
+        out = np.reshape(np.array(out),(self.number_training_images,self.number_testing_images))
         # Calculate and print the Recall@N
         N = [1,5,10,15,20,25]
         R = []
         # Create GT matrix
-        GT = np.zeros((model.number_testing_images,model.number_training_images), dtype=int)
+        GT = np.zeros((self.number_testing_images,self.number_training_images), dtype=int)
         for n in range(len(GT)):
             GT[n,n] = 1
         for n in N:
@@ -147,7 +152,7 @@ class VPRTempo(nn.Module):
         table.add_row(["Recall", R[0], R[1], R[2], R[3], R[4], R[5]])
         model.logger.info(table)
 
-    def forward(self, spikes, layer):
+    def forward(self, spikes):
         """
         Compute the forward pass of the model.
     
@@ -159,7 +164,7 @@ class VPRTempo(nn.Module):
         """
         
         spikes = self.quant(spikes)
-        spikes = self.add.add(layer.exc(spikes), layer.inh(spikes))
+        spikes = self.inference(spikes)
         spikes = self.dequant(spikes)
         
         return spikes
@@ -169,7 +174,7 @@ class VPRTempo(nn.Module):
         Load pre-trained model and set the state dictionary keys.
         """
         self.load_state_dict(torch.load(model_path, map_location=self.device),
-                             strict=True)
+                             strict=False)
             
 def generate_model_name(model):
     """
@@ -227,11 +232,8 @@ def run_inference(model, model_name, qconfig):
     # Load the model
     model.load_model(os.path.join('./models', model_name))
 
-    # Retrieve layer names for inference
-    layer_names = list(model.layer_dict.keys())
-
     # Use evaluate method for inference accuracy
-    model.evaluate(model, test_loader, layers=layer_names)
+    model.evaluate(model, test_loader)
 
 if __name__ == "__main__":
     # Set the number of threads for PyTorch
