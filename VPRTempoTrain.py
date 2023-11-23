@@ -43,13 +43,13 @@ from dataset import CustomImageDataset, ProcessImage
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-class VPRTempo(nn.Module):
+class VPRTempoTrain(nn.Module):
     def __init__(self):
-        super(VPRTempo, self).__init__()
+        super(VPRTempoTrain, self).__init__()
 
         # Configure the network
         configure(self)    
-
+        model_logger(self)  
         # Layer dict to keep track of layer names and their order
         self.layer_dict = {}
         self.layer_counter = 0
@@ -107,7 +107,7 @@ class VPRTempo(nn.Module):
         Anneal the learning rate for the current layer.
         """
         if np.mod(mod, 100) == 0: # Modify learning rate every 100 timesteps
-            pt = pow(float(self.T - mod) / self.T, self.annl_pow)
+            pt = pow(float(self.T - mod) / self.T, 2)
             layer.eta_ip = torch.mul(itp, pt) # Anneal intrinsic threshold plasticity learning rate
             layer.eta_stdp = torch.mul(stdp, pt) # Anneal STDP learning rate
             
@@ -255,7 +255,7 @@ if __name__ == "__main__":
     # Set the number of threads for PyTorch
     #torch.set_num_threads(8)
     # Initialize the model
-    model = VPRTempo()
+    model = VPRTempoTrain()
     if model.quantize:
         raise ValueError("Quantization enabled, please disable.")
     # Initialize the logger
