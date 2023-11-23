@@ -15,7 +15,7 @@ def configure(model):
     model.number_modules = 1 # Number of expert modules (currently not implemented)
     model.number_training_images = 500 # Number of training images
     model.number_testing_images = model.number_training_images # Number of testing images
-    model.locations = ["winter"] # Locations to train on (location repeats for training datasets)
+    model.locations = ["spring","fall"] # Locations to train on (location repeats for training datasets)
     model.test_locations = ["summer"] # Location to query with
     model.filter = 8 # Filter for training images
     model.validation = True # Validation (maybe deprecated for now?)
@@ -51,9 +51,9 @@ def configure(model):
         model.testing_dirs.append(os.path.join(model.testPath,n))
 
     # Set the model parameters
-    model.epoch = 8 # Number of epochs
-    model.patches = 7 # Number of patches
-    model.dims = [28,28] # Dimensions of the input image
+    model.epoch = 4 # Number of epochs
+    model.patches = 15 # Number of patches
+    model.dims = [56,56] # Dimensions of the input image
     model.location_repeat = len(model.locations) # Number of times to repeat the locations
     model.annl_pow = 2 # Power of the annealmeant function
 
