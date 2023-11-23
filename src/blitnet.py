@@ -110,6 +110,13 @@ class SNNLayer(nn.Module):
             self.havconnExc = self.exc.weight > 0
             self.havconnInh = self.inh.weight < 0
 
+            # Combine weights into a single tensor
+            self.w = nn.Linear(dims[0], dims[1], bias=False)
+            self.w.weight = nn.Parameter(torch.add(self.exc.weight, self.inh.weight))
+
+            self.havconnCombinedExc = self.w.weight > 0
+            self.havconnCombinedInh = self.w.weight < 0
+
     def addWeights(self,W_range=[0,0],p=[0,0],dims=[0,0],device=None):
 
         # Get torch device  
@@ -170,7 +177,7 @@ def calc_stdp(prespike, spikes, noclp, layer, idx, prev_layer=None):
     if layer.spk_force:
         
         # Get layer dimensions
-        shape = layer.exc.weight.data.shape
+        shape = layer.w.weight.data.shape
         
         # Get the output neuron index
         idx_sel = torch.arange(int(idx[0]), int(idx[0]) + 1, 
@@ -194,34 +201,30 @@ def calc_stdp(prespike, spikes, noclp, layer, idx, prev_layer=None):
         post = torch.tile(xdiff, (shape[1], 1))
 
         # Apply the weight changes
-        layer.exc.weight.data += ((pre * post * layer.havconnExc.T) * 
+        layer.w.weight.data += ((pre * post * layer.havconnCombinedExc.T) * 
                                        layer.eta_stdp).T
-        layer.inh.weight.data += ((-pre * post * layer.havconnInh.T) * 
+        layer.w.weight.data += ((-pre * post * layer.havconnCombinedInh.T) * 
                                        (layer.eta_stdp * -1)).T
 
     # Normal STDP
     else:
         
         # Get layer dimensions
-        shape = layer.exc.weight.data.shape
+        shape = layer.w.weight.data.shape
         
         # Tile out pre- and post-spikes
         pre = torch.tile(torch.reshape(prespike, (shape[1], 1)), (1, shape[0]))
         post = torch.tile(spikes, (shape[1], 1))
         
         # Apply positive and negative weight changes
-        layer.exc.weight.data += (((0.5 - post) * (pre > 0) * (post > 0) * 
-                                  layer.havconnExc.T) * layer.eta_stdp).T
-        layer.inh.weight.data += (((0.5 - post) * (pre > 0) * 
-                                  (post > 0) * layer.havconnInh.T) * (layer.eta_stdp * -1)).T
-
-    # In-place clamp for excitatory and inhibitory weights
-    layer.exc.weight.data[layer.exc.weight.data < 0] = 1e-06
-    layer.inh.weight.data[layer.inh.weight.data > 0] = -1e-06
+        layer.w.weight.data += (((0.5 - post) * (pre > 0) * (post > 0) * 
+                                  layer.havconnCombinedExc.T) * layer.eta_stdp).T
+        layer.w.weight.data += (((0.5 - post) * (pre > 0) * 
+                                  (post > 0) * layer.havconnCombinedInh.T) * (layer.eta_stdp * -1)).T
     
     # Remove negative weights for excW and positive for inhW
-    layer.exc.weight.data[layer.havconnExc] = layer.exc.weight.data[layer.havconnExc].clamp(min=1e-06, max=10)
-    layer.inh.weight.data[layer.havconnInh] = layer.inh.weight.data[layer.havconnInh].clamp(min=-10, max=-1e-06)
+    layer.w.weight.data[layer.havconnCombinedExc] = layer.w.weight.data[layer.havconnCombinedExc].clamp(min=1e-06, max=10)
+    layer.w.weight.data[layer.havconnCombinedInh] = layer.w.weight.data[layer.havconnCombinedInh].clamp(min=-10, max=-1e-06)
 
     # Check if layer has target firing rate and an ITP learning rate
     if layer.have_rate and layer.eta_ip > 0.0:
@@ -231,11 +234,12 @@ def calc_stdp(prespike, spikes, noclp, layer, idx, prev_layer=None):
         layer.thr.data[layer.thr.data < 0] = 0
     
     # Check if layer has inhibitory weights and an stdp learning rate
-    if torch.any(layer.inh.weight.data).item() and layer.eta_stdp != 0:
+    if torch.any(layer.w.weight.data).item() and layer.eta_stdp != 0:
         
         # Normalize the inhibitory weights using homeostasis
-        inhW = layer.inh.weight.data.T
-        layer.inh.weight.data += (torch.mul(noclp,inhW) * layer.eta_stdp*50).T
-        layer.inh.weight.data[layer.inh.weight.data > 0.0] = -1e-06
+        inhW = layer.w.weight.data.T.clone()
+        inhW[inhW>0] = 0
+        layer.w.weight.data += (torch.mul(noclp,inhW) * layer.eta_stdp*50).T
+        #layer.w.weight.data[layer.w.weight.data > 0.0] = -1e-06
 
     return layer
