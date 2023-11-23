@@ -1,26 +1,31 @@
 import os
 import torch
 import logging
+import json
+import sys
+sys.path.append('./config')
 
 from datetime import datetime
 
 def configure(model):
     """
-    Configure the model
+    Configure the model settings
     """
-    model.dataset = 'nordland' # Dataset name
-    model.dataset_file = os.path.join('./dataset',model.dataset+'.csv') # Dataset file (must be PyTorch Dataset)
-    model.trainingPath = './dataset/' # Path to training images
-    model.testPath = './dataset/' # Path to testing images
-    model.number_modules = 1 # Number of expert modules (currently not implemented)
-    model.number_training_images = 500 # Number of training images
-    model.number_testing_images = model.number_training_images # Number of testing images
-    model.locations = ["spring","fall"] # Locations to train on (location repeats for training datasets)
-    model.test_locations = ["summer"] # Location to query with
-    model.filter = 8 # Filter for training images
-    model.validation = True # Validation (maybe deprecated for now?)
-    model.log = True # Log to console
-    model.quantize = True # Quantize the network
+    base_config = {
+        "dataset": "nordland",
+        "number_places": 500,
+        "number_modules": 1,
+        "database_dirs": ["spring", "fall"],
+        "query_dir": ["summer"],
+        "filter": 8,
+        "epoch": 4,
+        "patches": 15,
+        "dims": [56,56],
+    }
+
+    # Write to base_config JSON file
+    with open('./config/base_config.json', 'w') as file:
+        json.dump(base_config, file, indent=4)
     
     # Set default paths if the provided paths are not valid directories
     if not os.path.isdir(getattr(model, 'trainingPath', '')):
@@ -50,19 +55,11 @@ def configure(model):
     for n in model.test_locations:
         model.testing_dirs.append(os.path.join(model.testPath,n))
 
-    # Set the model parameters
-    model.epoch = 4 # Number of epochs
-    model.patches = 15 # Number of patches
-    model.dims = [56,56] # Dimensions of the input image
     model.location_repeat = len(model.locations) # Number of times to repeat the locations
-    model.annl_pow = 2 # Power of the annealmeant function
 
     """
     These parameters are used to define the network architecture
     """
-    model.input = int(model.dims[0]*model.dims[1]) # Number of input neurons
-    model.feature = int(model.input*2) # Number of feature neurons
-    model.output = int(model.number_training_images/model.number_modules) # Number of output neurons
     
     # Set the torch device
     if not model.quantize:
@@ -127,4 +124,49 @@ def model_logger(model):
         else:
             model.logger.info('CUDA available: ' + str(torch.cuda.is_available()))
             model.logger.info('Current device is: CPU')
+    model.logger.info('')
+
+def model_logger_quant(model): 
+    """
+    Configure the model logger
+    """   
+    if os.path.isdir('../output'):
+        now = datetime.now()
+        model.output_folder = '../output/' + now.strftime("%d%m%y-%H-%M-%S")
+    else:
+        now = datetime.now()
+        model.output_folder = './output/' + now.strftime("%d%m%y-%H-%M-%S")
+    
+    os.mkdir(model.output_folder)
+    # Create the logger
+    model.logger = logging.getLogger("VPRTempo")
+    if (model.logger.hasHandlers()):
+        model.logger.handlers.clear()
+    # Set the logger level
+    model.logger.setLevel(logging.DEBUG)
+    logging.basicConfig(filename=model.output_folder + "/logfile.log",
+                        filemode="a+",
+                        format="%(asctime)-15s %(levelname)-8s %(message)s")
+    # Add the logger to the console (if specified)
+    if model.log:
+        model.logger.addHandler(logging.StreamHandler())
+        
+    model.logger.info('')
+
+    model.logger.info('██╗   ██╗██████╗ ██████╗ ████████╗███████╗███╗   ███╗██████╗  ██████╗        ██████╗ ██╗   ██╗ █████╗ ███╗   ██╗████████╗')
+    model.logger.info('██║   ██║██╔══██╗██╔══██╗╚══██╔══╝██╔════╝████╗ ████║██╔══██╗██╔═══██╗      ██╔═══██╗██║   ██║██╔══██╗████╗  ██║╚══██╔══╝')
+    model.logger.info('██║   ██║██████╔╝██████╔╝   ██║   █████╗  ██╔████╔██║██████╔╝██║   ██║█████╗██║   ██║██║   ██║███████║██╔██╗ ██║   ██║')   
+    model.logger.info('╚██╗ ██╔╝██╔═══╝ ██╔══██╗   ██║   ██╔══╝  ██║╚██╔╝██║██╔═══╝ ██║   ██║╚════╝██║▄▄ ██║██║   ██║██╔══██║██║╚██╗██║   ██║')   
+    model.logger.info(' ╚████╔╝ ██║     ██║  ██║   ██║   ███████╗██║ ╚═╝ ██║██║     ╚██████╔╝      ╚██████╔╝╚██████╔╝██║  ██║██║ ╚████║   ██║')   
+    model.logger.info('  ╚═══╝  ╚═╝     ╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝     ╚═╝╚═╝      ╚═════╝        ╚══▀▀═╝  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝')                                                                                                                     
+    model.logger.info('-----------------------------------------------------------------------')
+    model.logger.info('Temporally Encoded Spiking Neural Network for Visual Place Recognition v1.1.0')
+    model.logger.info('Queensland University of Technology, Centre for Robotics')
+    model.logger.info('')
+    model.logger.info('© 2023 Adam D Hines, Peter G Stratton, Michael Milford, Tobias Fischer')
+    model.logger.info('MIT license - https://github.com/QVPR/VPRTempo')
+    model.logger.info('\\\\\\\\\\\\\\\\\\\\\\\\')
+    model.logger.info('')
+    model.logger.info('Quantization enabled')
+    model.logger.info('Current device is: CPU')
     model.logger.info('')

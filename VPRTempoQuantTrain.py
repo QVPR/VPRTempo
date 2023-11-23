@@ -38,19 +38,19 @@ import numpy as np
 import torch.nn as nn
 import torch.quantization as quantization
 
-from settings import configure, model_logger
+from settings import configure, model_logger_quant
 from dataset import CustomImageDataset, ProcessImage
 from torch.utils.data import DataLoader
 from torch.ao.quantization import QuantStub, DeQuantStub
 from tqdm import tqdm
 
-class VPRTempo(nn.Module):
+class VPRTempoQuantTrain(nn.Module):
     def __init__(self):
-        super(VPRTempo, self).__init__()
+        super(VPRTempoQuantTrain, self).__init__()
 
         # Configure the network
         configure(self)
-
+        model_logger_quant(self)
         # Add quantization stubs for Quantization Aware Training (QAT)
         self.quant = QuantStub()
         self.dequant = DeQuantStub()   
@@ -100,19 +100,13 @@ class VPRTempo(nn.Module):
         # Add layer name and index to the layer_dict
         self.layer_dict[name] = self.layer_counter
         self.layer_counter += 1                           
-        
-    def model_logger(self):
-        """
-        Log the model configuration to the console.
-        """
-        model_logger(self)
 
     def _anneal_learning_rate(self, layer, mod, itp, stdp):
         """
         Anneal the learning rate for the current layer.
         """
         if np.mod(mod, 100) == 0: # Modify learning rate every 100 timesteps
-            pt = pow(float(self.T - mod) / self.T, self.annl_pow)
+            pt = pow(float(self.T - mod) / self.T, 2)
             layer.eta_ip = torch.mul(itp, pt) # Anneal intrinsic threshold plasticity learning rate
             layer.eta_stdp = torch.mul(stdp, pt) # Anneal STDP learning rate
             
@@ -195,7 +189,7 @@ class VPRTempo(nn.Module):
         """
         torch.save(self.state_dict(), model_out) 
             
-def generate_model_name(model):
+def generate_model_name_quant(model):
     """
     Generate the model name based on its parameters.
     """
@@ -216,7 +210,7 @@ def check_pretrained_model(model_name):
         return retrain == 'n'
     return False
 
-def train_new_model(model, model_name, qconfig):
+def train_new_model_quant(model, model_name, qconfig):
     """
     Train a new model.
 
@@ -265,22 +259,18 @@ def train_new_model(model, model_name, qconfig):
     model.save_model(os.path.join('./models', model_name))    
 
 if __name__ == "__main__":
-    # Set the number of threads for PyTorch
-    #torch.set_num_threads(8)
     # Initialize the model
-    model = VPRTempo()
-    # Initialize the logger
-    model.model_logger()
+    model = VPRTempoQuantTrain()
     # Set the quantization configuration
     if model.quantize:
         qconfig = quantization.get_default_qat_qconfig('fbgemm')
     else:
         raise ValueError("Quantization must be enabled for training.")
     # Generate the model name
-    model_name = generate_model_name(model)
+    model_name = generate_model_name_quant(model)
     # Check if a pre-trained model exists
     use_pretrained = check_pretrained_model(model_name)
     # Train or run inference based on the user's input
     if not use_pretrained:
-        train_new_model(model, model_name, qconfig) # Training
+        train_new_model_quant(model, model_name, qconfig) # Training
     model.logger.info('Training complete.')
