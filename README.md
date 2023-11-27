@@ -11,6 +11,14 @@ This repository contains code for VPRTempo, a spiking neural network that uses t
   <img src="./assets/github_image.png" alt="VPRTempo method diagram"/>
 </p>
 
+VPRTempo is built on a [torch.nn](https://pytorch.org/tutorials/beginner/blitz/neural_networks_tutorial.html) network that employs custom learning rules based on the temporal codes of spikes in order to train layer weights. 
+
+In this repository, we provide two networks: 
+  - `VPRTempo`: Our base network architecture to perform visual place recognition (fp32)
+  - `VPRTempoQuant`: A modified base network with [Quantization Aware Training (QAT)](https://pytorch.org/docs/stable/quantization.html) enabled (int8)
+
+To use VPRTempo, please follow the instructions below for installation and usage.
+
 ## License & Citation
 This repository is licensed under the [MIT License](./LICENSE)
 
