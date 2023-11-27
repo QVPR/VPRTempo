@@ -25,35 +25,49 @@ If you use our code, please cite the following [paper](https://arxiv.org/abs/230
 }
 ```
 ## Installation and setup
-We recommend installing dependencies for VPRTempo with [Mambaforge](https://mamba.readthedocs.io/en/latest/installation.html), however `conda` may also be used. VPRTempo uses [PyTorch](https://pytorch.org/) with the capability for [CUDA](https://developer.nvidia.com/cuda-toolkit) GPU acceleration. Follow the installation instructions based on your operating system and hardware specifications.
-
-### Windows & Linux
-#### CUDA enabled installation
-Use conda/mamba to create a new environment and install Python, CUDA tools, and dependencies.
-
-```console
-conda create -n vprtempo -c pytorch -c nvidia python torchvision torchaudio pytorch-cuda=11.7 cudatoolkit opencv matplotlib
-```
-> **Note**
-> Install the version of PyTorch-CUDA that is compatible with your graphics card, see [Start Locally | PyTorch](https://pytorch.org/get-started/locally/) for more details.
-
-#### CPU only
-To install using the CPU only, simply install Python + dependencies.
-```console
-conda create -n vprtempo python pytorch torchvision torchaudio cpuonly opencv matplotlib -c pytorch
-```
-### MacOS
-CUDA acceleration is not available on MacOS and the network will only use the CPU, so simply just need to install Python + dependencies.
-```console
-conda create -n vprtempo -c conda-forge python opencv matplotlib -c pytorch pytorch::pytorch torchvision torchaudio
-```
-
+VPRTempo uses [PyTorch](https://pytorch.org/) with [CUDA](https://developer.nvidia.com/cuda-toolkit) GPU acceleration. Follow the installation instructions based on your operating system and hardware specifications. MacOS has no compatibly with CUDA.
 ### Get the repository
-Activate the environment & download the Github repository
+Download the Github repository.
 ```console
-conda activate vprtempo
 git clone https://github.com/QVPR/VPRTempo.git
 cd ~/VPRTempo
+```
+Once downloaded, please install the required dependencies to run the network through one of the following options:
+
+### Option 1: Pip install
+Dependencies for VPRTempo can downloaded from our PyPi package.
+
+```console
+# For Windows/Linux systems
+!pip install vprtempo
+
+# For MacOS
+!pip install vprtempomacos
+```
+
+### Option 2: Local requirements install
+Dependencies can be installed either through our provided `requirements.txt` files.
+
+```console
+# For Windows/Linux
+!pip install -r requirements.txt
+
+# For MacOS
+!pip instal -r requirements_macos.txt
+```
+### Option 3: Conda install
+>**:heavy_exclamation_mark: Recommended:**
+> Use [Mambaforge](https://mamba.readthedocs.io/en/latest/installation.html) instead of conda.
+
+```console
+# Windows/Linux - CUDA enabled
+conda create -n vprtempo -c pytorch -c nvidia python torchvision torchaudio pytorch-cuda=11.7 cudatoolkit prettytable tqdm numpy pandas scikit-learn
+
+# Windows/Linux - CPU only
+conda create -n vprtempo python pytorch torchvision torchaudio cpuonly prettytable tqdm numpy pandas scikit-learn -c pytorch
+
+# MacOS
+conda create -n vprtempo -c conda-forge python prettytable tqdm numpy pandas scikit-learn -c pytorch pytorch::pytorch torchvision torchaudio
 ```
 
 ## Datasets
@@ -65,7 +79,7 @@ VPRTempo was developed and tested using the [Nordland](https://webdiis.unizar.es
 To simplify first usage, we have set the defaults in `VPRTempo.py` to train and test on a small subset of Nordland data. We recommend [downloading Nordland](https://webdiis.unizar.es/~jmfacil/pr-nordland/#download-dataset) and using the `./src/nordland.py` script to unzip and organize the images into the correct file and naming structure.
 
 ### Custom datasets
-In general, data should be organised in the following way in order to train the network on multiple traversals of the same location.
+In general, data should be organised in the `./dataset` folder in the following way in order to train the network on multiple traversals of the same location.
 
 ```
 --dataset
@@ -76,17 +90,7 @@ In general, data should be organised in the following way in order to train the 
   |--testing
   |  |--test_traversal
 ```
-Speicfy the datapaths by altering `self.trainingPath` and `self.testPath` in `VPRTempo.py`. You can specify which traversals you want to train and test on by also altering `self.locations` and `self.test_location`. In the case above it would be the following; 
-
-```python
-self.trainingPath = '<path_to_data>/training/'
-self.testPath = '<path_to_data>/testing/'
-
-self.locations = ["traversal_1","traversal_2"]
-self.test_location = "test_traversal"
-```
-
-Image names for the same locations across traversals (training and testing) must be the same as they are imported based on a `.txt` file. 
+If you wish to specify a different directory where data is stored, modify the `--data_dir` default argument in `main.py`. Similarly, if you wish to train/query different traversals modify `--database_dirs` and `--query_dir` in `main.py` accordingly.
 
 ## Usage
 Both the training and testing is handled by the `VPRTempo.py` script. Initial installs do not contain any pre-defined networks and will need to be trained prior to use.
