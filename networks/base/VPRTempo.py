@@ -114,18 +114,23 @@ class VPRTempo(nn.Module):
         pbar = tqdm(total=self.num_places,
                     desc="Running the test network",
                     position=0)
+        
+        self.inference = nn.Sequential(
+            self.feature_layer.w,
+            nn.Hardtanh(0, 0.9),
+            nn.ReLU(),
+            self.output_layer.w,
+            nn.Hardtanh(0, 0.9),
+            nn.ReLU()
+        )
         # Initiliaze the output spikes variable
         out = []
         # Run inference for the specified number of timesteps
         for spikes, labels in test_loader:
             # Set device
             spikes, labels = spikes.to(self.device), labels.to(self.device)
-            # Pass through previous layers if they exist
-            if layers:
-                for layer_name in layers:
-                    layer = getattr(self, layer_name)
-                    spikes = self.forward(spikes, layer)
-                    spikes = bn.clamp_spikes(spikes, layer)
+            # Forward pass
+            spikes = self.forward(spikes)
 
             # Add output spikes to list
             out.append(spikes.detach().cpu().tolist())
@@ -153,7 +158,7 @@ class VPRTempo(nn.Module):
         table.add_row(["Recall", R[0], R[1], R[2], R[3], R[4], R[5]])
         model.logger.info(table)
 
-    def forward(self, spikes, layer):
+    def forward(self, spikes):
         """
         Compute the forward pass of the model.
     
@@ -164,7 +169,7 @@ class VPRTempo(nn.Module):
         - Tensor: Output after processing.
         """
         
-        spikes = layer.w(spikes)
+        spikes = self.inference(spikes)
         
         return spikes
         
@@ -174,17 +179,6 @@ class VPRTempo(nn.Module):
         """
         self.load_state_dict(torch.load(model_path, map_location=self.device),
                              strict=False)
-
-def check_pretrained_model(model_name):
-    """
-    Check if a pre-trained model exists and tell user if it does not.
-    """
-    if not os.path.exists(os.path.join('./models', model_name)):
-        model.logger.info("A pre-trained network does not exist: please train one using VPRTempo_Trainer")
-        pretrain = 'n'
-    else:
-        pretrain = 'y'
-    return pretrain
 
 def run_inference(model, model_name):
     """
