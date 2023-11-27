@@ -38,19 +38,27 @@ import numpy as np
 import torch.nn as nn
 import torch.quantization as quantization
 
-from settings import configure, model_logger_quant
+from loggers import model_logger_quant
 from dataset import CustomImageDataset, ProcessImage
 from torch.utils.data import DataLoader
 from torch.ao.quantization import QuantStub, DeQuantStub
 from tqdm import tqdm
 
 class VPRTempoQuantTrain(nn.Module):
-    def __init__(self):
+    def __init__(self, args):
         super(VPRTempoQuantTrain, self).__init__()
 
+        # Set the arguments
+        self.args = args
+        for arg in vars(args):
+            setattr(self, arg, getattr(args, arg))
+
         # Configure the network
-        configure(self)
-        model_logger_quant(self)
+        self.device = model_logger_quant(self)
+
+        # Set the dataset file
+        self.dataset_file = os.path.join('./dataset', self.dataset + '.csv')
+
         # Add quantization stubs for Quantization Aware Training (QAT)
         self.quant = QuantStub()
         self.dequant = DeQuantStub()   
@@ -58,6 +66,15 @@ class VPRTempoQuantTrain(nn.Module):
         # Layer dict to keep track of layer names and their order
         self.layer_dict = {}
         self.layer_counter = 0
+
+        # Define layer architecture
+        self.input = int(args.dims[0]*args.dims[1])
+        self.feature = int(self.input * 2)
+        self.output = int(args.num_places / args.num_modules)
+
+        # Set the total timestep count
+        self.location_repeat = len(args.database_dirs) # Number of times to repeat the locations
+        self.T = int((self.num_places / self.num_modules) * self.location_repeat * self.epoch)
 
         """
         Define trainable layers here
@@ -161,11 +178,6 @@ class VPRTempoQuantTrain(nn.Module):
         # Close the tqdm progress bar
         pbar.close()
 
-        # Free up memory
-        if self.device.type == "cuda":
-            torch.cuda.empty_cache()
-            gc.collect()
-
     def forward(self, spikes, layer):
         """
         Compute the forward pass of the model.
@@ -197,7 +209,7 @@ def generate_model_name_quant(model):
             str(model.input) +
             str(model.feature) +
             str(model.output) +
-            str(model.number_modules) +
+            str(model.num_modules) +
             '.pth')
 
 def check_pretrained_model(model_name):
@@ -221,11 +233,12 @@ def train_new_model_quant(model, model_name, qconfig):
     # Initialize the image transforms and datasets
     image_transform = ProcessImage(model.dims, model.patches)
     train_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
-                                       img_dirs=model.training_dirs,
-                                       transform=image_transform,
-                                       skip=model.filter,
-                                       max_samples=model.number_training_images,
-                                       test=False)
+                                      base_dir=model.data_dir,
+                                      img_dirs=model.database_dirs,
+                                      transform=image_transform,
+                                      skip=model.filter,
+                                      max_samples=model.num_places,
+                                      test=False)
     # Initialize the data loader
     train_loader = DataLoader(train_dataset, 
                               batch_size=1, 
@@ -256,21 +269,4 @@ def train_new_model_quant(model, model_name, qconfig):
     model = quantization.convert(model, inplace=False)
     model.eval()
     # Save the model
-    model.save_model(os.path.join('./models', model_name))    
-
-if __name__ == "__main__":
-    # Initialize the model
-    model = VPRTempoQuantTrain()
-    # Set the quantization configuration
-    if model.quantize:
-        qconfig = quantization.get_default_qat_qconfig('fbgemm')
-    else:
-        raise ValueError("Quantization must be enabled for training.")
-    # Generate the model name
-    model_name = generate_model_name_quant(model)
-    # Check if a pre-trained model exists
-    use_pretrained = check_pretrained_model(model_name)
-    # Train or run inference based on the user's input
-    if not use_pretrained:
-        train_new_model_quant(model, model_name, qconfig) # Training
-    model.logger.info('Training complete.')
+    model.save_model(os.path.join('./models', model_name))
