@@ -36,32 +36,37 @@ sys.path.append('./dataset')
 import blitnet as bn
 import numpy as np
 import torch.nn as nn
-import torch.quantization as quantization
 
-from settings import configure, model_logger
+from loggers import model_logger
 from dataset import CustomImageDataset, ProcessImage
 from torch.utils.data import DataLoader
-from torch.ao.quantization import QuantStub, DeQuantStub
 from tqdm import tqdm
 from prettytable import PrettyTable
 from metrics import recallAtK
 
 class VPRTempo(nn.Module):
-    def __init__(self):
+    def __init__(self, args):
         super(VPRTempo, self).__init__()
 
-        # Configure the network
-        configure(self)
+        # Set the arguments
+        self.args = args
+        for arg in vars(args):
+            setattr(self, arg, getattr(args, arg))
 
-        model_logger(self)
+        # Set the dataset file
+        self.dataset_file = os.path.join('./dataset', self.dataset + '.csv')
 
-        # Add quantization stubs for Quantization Aware Training (QAT)
-        self.quant = QuantStub()
-        self.dequant = DeQuantStub() 
+        # Set the model logger and return the device
+        self.device = model_logger(self)    
 
         # Layer dict to keep track of layer names and their order
         self.layer_dict = {}
         self.layer_counter = 0
+
+        # Define layer architecture
+        self.input = int(args.dims[0]*args.dims[1])
+        self.feature = int(self.input * 2)
+        self.output = int(args.num_places / args.num_modules)
 
         """
         Define trainable layers here
@@ -98,26 +103,15 @@ class VPRTempo(nn.Module):
         self.layer_dict[name] = self.layer_counter
         self.layer_counter += 1                           
 
-    def evaluate(self, model, test_loader):
+    def evaluate(self, model, test_loader, layers=None):
         """
         Run the inferencing model and calculate the accuracy.
 
         :param test_loader: Testing data loader
         :param layers: Layers to pass data through
         """
-        # Determine the Hardtahn max value
-        maxSpike = 1//model.quant.scale
-        # Define the sequential inference model
-        self.inference = nn.Sequential(
-            self.feature_layer.w,
-            nn.Hardtanh(0, maxSpike),
-            nn.ReLU(),
-            self.output_layer.w,
-            nn.Hardtanh(0, maxSpike),
-            nn.ReLU()
-        )
         # Initialize the tqdm progress bar
-        pbar = tqdm(total=self.number_testing_images,
+        pbar = tqdm(total=self.num_places,
                     desc="Running the test network",
                     position=0)
         # Initiliaze the output spikes variable
@@ -127,7 +121,12 @@ class VPRTempo(nn.Module):
             # Set device
             spikes, labels = spikes.to(self.device), labels.to(self.device)
             # Pass through previous layers if they exist
-            spikes = self.forward(spikes)
+            if layers:
+                for layer_name in layers:
+                    layer = getattr(self, layer_name)
+                    spikes = self.forward(spikes, layer)
+                    spikes = bn.clamp_spikes(spikes, layer)
+
             # Add output spikes to list
             out.append(spikes.detach().cpu().tolist())
             pbar.update(1)
@@ -136,23 +135,25 @@ class VPRTempo(nn.Module):
         pbar.close()
 
         # Rehsape output spikes into a similarity matrix
-        out = np.reshape(np.array(out),(self.number_training_images,self.number_testing_images))
-        # Calculate and print the Recall@N
-        N = [1,5,10,15,20,25]
-        R = []
+        out = np.reshape(np.array(out),(model.num_places,model.num_places))
+
+        # Recall@N
+        N = [1,5,10,15,20,25] # N values to calculate
+        R = [] # Recall@N values
         # Create GT matrix
-        GT = np.zeros((self.number_testing_images,self.number_training_images), dtype=int)
+        GT = np.zeros((model.num_places,model.num_places), dtype=int)
         for n in range(len(GT)):
             GT[n,n] = 1
+        # Calculate Recall@N
         for n in N:
-            R.append(recallAtK(out,GThard=GT,K=n))
+            R.append(round(recallAtK(out,GThard=GT,K=n),2))
         # Print the results
         table = PrettyTable()
         table.field_names = ["N", "1", "5", "10", "15", "20", "25"]
         table.add_row(["Recall", R[0], R[1], R[2], R[3], R[4], R[5]])
         model.logger.info(table)
 
-    def forward(self, spikes):
+    def forward(self, spikes, layer):
         """
         Compute the forward pass of the model.
     
@@ -163,9 +164,7 @@ class VPRTempo(nn.Module):
         - Tensor: Output after processing.
         """
         
-        spikes = self.quant(spikes)
-        spikes = self.inference(spikes)
-        spikes = self.dequant(spikes)
+        spikes = layer.w(spikes)
         
         return spikes
         
@@ -175,30 +174,19 @@ class VPRTempo(nn.Module):
         """
         self.load_state_dict(torch.load(model_path, map_location=self.device),
                              strict=False)
-            
-def generate_model_name(model):
-    """
-    Generate the model name based on its parameters.
-    """
-    return ("VPRTempoQuant" +
-            str(model.input) +
-            str(model.feature) +
-            str(model.output) +
-            str(model.number_modules) +
-            '.pth')
 
 def check_pretrained_model(model_name):
     """
     Check if a pre-trained model exists and tell user if it does not.
     """
     if not os.path.exists(os.path.join('./models', model_name)):
-        model.logger.info("A pre-trained network does not exist: please train one using VPRTempoQuant_Trainer")
+        model.logger.info("A pre-trained network does not exist: please train one using VPRTempo_Trainer")
         pretrain = 'n'
     else:
         pretrain = 'y'
     return pretrain
 
-def run_inference(model, model_name, qconfig):
+def run_inference(model, model_name):
     """
     Run inference on a pre-trained model.
 
@@ -209,10 +197,11 @@ def run_inference(model, model_name, qconfig):
     # Initialize the image transforms and datasets
     image_transform = ProcessImage(model.dims, model.patches)
     test_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
-                                      img_dirs=model.testing_dirs,
+                                      base_dir=model.data_dir,
+                                      img_dirs=model.query_dir,
                                       transform=image_transform,
                                       skip=model.filter,
-                                      max_samples=model.number_testing_images)
+                                      max_samples=model.num_places)
     # Initialize the data loader
     test_loader = DataLoader(test_dataset, 
                              batch_size=1, 
@@ -221,32 +210,12 @@ def run_inference(model, model_name, qconfig):
                              persistent_workers=True)
     # Set the model to evaluation mode and set configuration
     model.eval()
-    model.qconfig = qconfig
 
-    # Apply quantization configurations to all layers in layer_dict
-    for layer_name, _ in model.layer_dict.items():
-        getattr(model, layer_name).qconfig = qconfig
-    # Prepare and convert the model to a quantized model
-    model = quantization.prepare(model, inplace=False)
-    model = quantization.convert(model, inplace=False)
     # Load the model
     model.load_model(os.path.join('./models', model_name))
 
-    # Use evaluate method for inference accuracy
-    model.evaluate(model, test_loader)
+    # Retrieve layer names for inference
+    layer_names = list(model.layer_dict.keys())
 
-if __name__ == "__main__":
-    # Set the number of threads for PyTorch
-    #torch.set_num_threads(8)
-    # Initialize the model
-    model = VPRTempo()
-    # Set the quantization configuration
-    qconfig = quantization.get_default_qat_qconfig('fbgemm')
-    # Generate the model name
-    model_name = generate_model_name(model)
-    # Check if a pre-trained model exists
-    use_pretrained = check_pretrained_model(model_name)
-    if not use_pretrained == 'n':
-        # Run inference based on the user's input
-        with torch.no_grad():    
-            run_inference(model, model_name, qconfig) # Inference
+    # Use evaluate method for inference accuracy
+    model.evaluate(model, test_loader, layers=layer_names)

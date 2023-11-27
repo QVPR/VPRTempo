@@ -159,7 +159,7 @@ class ProcessImage:
         return img
 
 class CustomImageDataset(Dataset):
-    def __init__(self, annotations_file, img_dirs, transform=None, target_transform=None, 
+    def __init__(self, annotations_file, base_dir, img_dirs, transform=None, target_transform=None, 
                  skip=1, max_samples=None, test=True):
         self.transform = transform
         self.target_transform = target_transform
@@ -170,7 +170,7 @@ class CustomImageDataset(Dataset):
         for img_dir in img_dirs:
 
             img_labels = pd.read_csv(annotations_file)
-            img_labels['file_path'] = img_labels.apply(lambda row: os.path.join(img_dir, row.iloc[0]), axis=1)
+            img_labels['file_path'] = img_labels.apply(lambda row: os.path.join(base_dir,img_dir, row.iloc[0]), axis=1)
             
             # Select specific rows based on the skip parameter
             img_labels = img_labels.iloc[::skip]

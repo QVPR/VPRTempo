@@ -38,18 +38,26 @@ import numpy as np
 import torch.nn as nn
 import torch.quantization as quantization
 
-from settings import configure, model_logger
+from loggers import model_logger_quant
 from dataset import CustomImageDataset, ProcessImage
 from torch.utils.data import DataLoader
 from torch.ao.quantization import QuantStub, DeQuantStub
 from tqdm import tqdm
 
-class VPRTempo(nn.Module):
-    def __init__(self):
-        super(VPRTempo, self).__init__()
+class VPRTempoQuantTrain(nn.Module):
+    def __init__(self, args):
+        super(VPRTempoQuantTrain, self).__init__()
+
+        # Set the arguments
+        self.args = args
+        for arg in vars(args):
+            setattr(self, arg, getattr(args, arg))
 
         # Configure the network
-        configure(self)
+        self.device = model_logger_quant(self)
+
+        # Set the dataset file
+        self.dataset_file = os.path.join('./dataset', self.dataset + '.csv')
 
         # Add quantization stubs for Quantization Aware Training (QAT)
         self.quant = QuantStub()
@@ -58,6 +66,15 @@ class VPRTempo(nn.Module):
         # Layer dict to keep track of layer names and their order
         self.layer_dict = {}
         self.layer_counter = 0
+
+        # Define layer architecture
+        self.input = int(args.dims[0]*args.dims[1])
+        self.feature = int(self.input * 2)
+        self.output = int(args.num_places / args.num_modules)
+
+        # Set the total timestep count
+        self.location_repeat = len(args.database_dirs) # Number of times to repeat the locations
+        self.T = int((self.num_places / self.num_modules) * self.location_repeat * self.epoch)
 
         """
         Define trainable layers here
@@ -100,19 +117,13 @@ class VPRTempo(nn.Module):
         # Add layer name and index to the layer_dict
         self.layer_dict[name] = self.layer_counter
         self.layer_counter += 1                           
-        
-    def model_logger(self):
-        """
-        Log the model configuration to the console.
-        """
-        model_logger(self)
 
     def _anneal_learning_rate(self, layer, mod, itp, stdp):
         """
         Anneal the learning rate for the current layer.
         """
         if np.mod(mod, 100) == 0: # Modify learning rate every 100 timesteps
-            pt = pow(float(self.T - mod) / self.T, self.annl_pow)
+            pt = pow(float(self.T - mod) / self.T, 2)
             layer.eta_ip = torch.mul(itp, pt) # Anneal intrinsic threshold plasticity learning rate
             layer.eta_stdp = torch.mul(stdp, pt) # Anneal STDP learning rate
             
@@ -167,11 +178,6 @@ class VPRTempo(nn.Module):
         # Close the tqdm progress bar
         pbar.close()
 
-        # Free up memory
-        if self.device.type == "cuda":
-            torch.cuda.empty_cache()
-            gc.collect()
-
     def forward(self, spikes, layer):
         """
         Compute the forward pass of the model.
@@ -195,7 +201,7 @@ class VPRTempo(nn.Module):
         """
         torch.save(self.state_dict(), model_out) 
             
-def generate_model_name(model):
+def generate_model_name_quant(model):
     """
     Generate the model name based on its parameters.
     """
@@ -203,7 +209,7 @@ def generate_model_name(model):
             str(model.input) +
             str(model.feature) +
             str(model.output) +
-            str(model.number_modules) +
+            str(model.num_modules) +
             '.pth')
 
 def check_pretrained_model(model_name):
@@ -216,7 +222,7 @@ def check_pretrained_model(model_name):
         return retrain == 'n'
     return False
 
-def train_new_model(model, model_name, qconfig):
+def train_new_model_quant(model, model_name, qconfig):
     """
     Train a new model.
 
@@ -227,11 +233,12 @@ def train_new_model(model, model_name, qconfig):
     # Initialize the image transforms and datasets
     image_transform = ProcessImage(model.dims, model.patches)
     train_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
-                                       img_dirs=model.training_dirs,
-                                       transform=image_transform,
-                                       skip=model.filter,
-                                       max_samples=model.number_training_images,
-                                       test=False)
+                                      base_dir=model.data_dir,
+                                      img_dirs=model.database_dirs,
+                                      transform=image_transform,
+                                      skip=model.filter,
+                                      max_samples=model.num_places,
+                                      test=False)
     # Initialize the data loader
     train_loader = DataLoader(train_dataset, 
                               batch_size=1, 
@@ -262,25 +269,4 @@ def train_new_model(model, model_name, qconfig):
     model = quantization.convert(model, inplace=False)
     model.eval()
     # Save the model
-    model.save_model(os.path.join('./models', model_name))    
-
-if __name__ == "__main__":
-    # Set the number of threads for PyTorch
-    #torch.set_num_threads(8)
-    # Initialize the model
-    model = VPRTempo()
-    # Initialize the logger
-    model.model_logger()
-    # Set the quantization configuration
-    if model.quantize:
-        qconfig = quantization.get_default_qat_qconfig('fbgemm')
-    else:
-        raise ValueError("Quantization must be enabled for training.")
-    # Generate the model name
-    model_name = generate_model_name(model)
-    # Check if a pre-trained model exists
-    use_pretrained = check_pretrained_model(model_name)
-    # Train or run inference based on the user's input
-    if not use_pretrained:
-        train_new_model(model, model_name, qconfig) # Training
-    model.logger.info('Training complete.')
+    model.save_model(os.path.join('./models', model_name))
