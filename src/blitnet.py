@@ -28,12 +28,10 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-from settings import configure
-
 
 class SNNLayer(nn.Module):
     def __init__(self, dims=[0,0],thr_range=[0,0],fire_rate=[0,0],ip_rate=0,
-                 stdp_rate=0,const_inp=[0,0],p=[1,1],spk_force=False,device=None,inference=False):
+                 stdp_rate=0,const_inp=[0,0],p=[1,1],spk_force=False,device=None,inference=False,args=None):
         super(SNNLayer, self).__init__()
         """
         dims: [input, output] dimensions of the layer
@@ -46,8 +44,6 @@ class SNNLayer(nn.Module):
         spk_force: boolean to force spikes
         """
 
-        # Configure the network
-        configure(self) # Sets the testing configuration
         # Device
         self.device = device
         # Add different parameters depending if trainnig or running inference model
