@@ -113,7 +113,7 @@ git lfs install
 git lfs pull
 ```
 ### Run the inference network
-To run the inference network, there are two options:
+The `main.py` script handles running the inference network, there are two options:
 
 #### Command terminal
 ```console
@@ -131,7 +131,23 @@ python main.py --quantize
   <img src="./assets/mainquant_example.gif" alt="Example of the quantized VPRTempo networking running"/>
 </p>
 
-### Run `main.py` in IDE
+#### IDE
+You can also run VPRTempo through your IDE by running `main.py`. Change the `bool` flag for `use_quantize` to `True` if you wish to run VPRTempoQuant.
+
+### Train new network
+If you do not wish to use the pretrained models or you would like to train your own, we can parse the `--train_new_model` flag to `main.py`. Note, if a pretrained model already exists you will be prompted if you would like to retrain it.
+```console
+# For VPRTempo
+python main.py --train_new_model
+
+# For VPRTempoQuant
+python main.py --train_new_model --quantize
+```
+<p style="width: 100%; display: block; margin-left: auto; margin-right: auto">
+  <img src="./assets/train_example.gif" alt="Example of the training VPRTempo networking running"/>
+</p>
+
+Similarly above, if you wish to run the training through an IDE then change the `bool` flag for `train_new_model` to `True`.
 
 ## Issues, bugs, and feature requests
 If you encounter problems whilst running the code or if you have a suggestion for a feature or improvement, please report it as an [issue](https://github.com/QVPR/VPRTempo/issues).
