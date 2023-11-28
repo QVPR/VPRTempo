@@ -1,8 +1,8 @@
-name: Update PyPi Package
+name: Publish to PyPi
 
 on:
-  push:
-    branches: [ main ]  # Trigger on push to main branch. Adjust as needed.
+  release:
+    types: [created]
 
 jobs:
   deploy:
@@ -14,7 +14,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v2
       with:
-        python-version: '3.x'  # Specify the Python version.
+        python-version: '3.x'
 
     - name: Install dependencies
       run: |
