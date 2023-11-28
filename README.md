@@ -82,17 +82,20 @@ VPRTempo was developed and tested using the [Nordland](https://webdiis.unizar.es
 
 To simplify first usage, we have set the defaults in `VPRTempo.py` to train and test on a small subset of Nordland data. We recommend [downloading Nordland](https://webdiis.unizar.es/~jmfacil/pr-nordland/#download-dataset) and using the `./src/nordland.py` script to unzip and organize the images into the correct file and naming structure.
 
-### Custom datasets
 For convenience, all data should be organised in the `./dataset` folder in the following way in order to train the network on multiple traversals of the same location.
 
 ```
 --dataset
-  |--traversal_1
-  |--traversal_2
-  |-- ...
-  |--test_traversal
+  |--summer
+  |--spring
+  |--fall
+  |--winter
 ```
-Running `nordland.py` script will automatically do this for you.
+### Custom Datasets
+To define your own custom dataset to use with VPRTempo, you will need to follow the conventions for [PyTorch Datasets & Dataloaders](https://pytorch.org/tutorials/beginner/basics/data_tutorial.html). We provide a simple script `./dataset/custom_dataset.py` which will rename images in user defined directories and generate the necessary `.csv` file to load into VPRTempo. 
+
+To learn how to use custom datasets, please see the [CustomDatasets.ipynb](https://github.com/AdamDHines/VPRTempo-quant/tree/main/tutorials) tutorial.
+
 ## Usage
 Running VPRTempo and VPRTempoQuant is handlded by `main.py`, which can be operated either through the command terminal or directly running the script. See below for more details.
 ### Prerequisites
@@ -148,6 +151,9 @@ python main.py --train_new_model --quantize
 </p>
 
 Similarly above, if you wish to run the training through an IDE then change the `bool` flag for `train_new_model` to `True`.
+
+## Tutorials
+We provide a series of Jupyter Notebook [tutorials](https://github.com/AdamDHines/VPRTempo-quant/tree/main/tutorials) that go through the basic operations and logic for VPRTempo and VPRTempoQuant. 
 
 ## Issues, bugs, and feature requests
 If you encounter problems whilst running the code or if you have a suggestion for a feature or improvement, please report it as an [issue](https://github.com/QVPR/VPRTempo/issues).
