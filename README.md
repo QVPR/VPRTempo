@@ -119,6 +119,19 @@ To run the inference network, there are two options:
 ```console
 python main.py
 ```
+<p style="width: 100%; display: block; margin-left: auto; margin-right: auto">
+  <img src="./assets/main_example.gif" alt="Example of the base VPRTempo networking running"/>
+</p>
+
+To run the quantized network, parse the `--quantize` argument.
+```console
+python main.py --quantize
+```
+<p style="width: 100%; display: block; margin-left: auto; margin-right: auto">
+  <img src="./assets/mainquant_example.gif" alt="Example of the quantized VPRTempo networking running"/>
+</p>
+
+### Run `main.py` in IDE
 
 ## Issues, bugs, and feature requests
 If you encounter problems whilst running the code or if you have a suggestion for a feature or improvement, please report it as an [issue](https://github.com/QVPR/VPRTempo/issues).
