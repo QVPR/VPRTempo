@@ -12,7 +12,7 @@ This repository contains code for VPRTempo, a spiking neural network that uses t
   <img src="./assets/github_image.png" alt="VPRTempo method diagram"/>
 </p>
 
-VPRTempo is built on a [torch.nn](https://pytorch.org/tutorials/beginner/blitz/neural_networks_tutorial.html) network that employs custom learning rules based on the temporal codes of spikes in order to train layer weights. 
+VPRTempo is built on a [torch.nn](https://pytorch.org/tutorials/beginner/blitz/neural_networks_tutorial.html) framework and employs custom learning rules based on the temporal codes of spikes in order to train layer weights. 
 
 In this repository, we provide two networks: 
   - `VPRTempo`: Our base network architecture to perform visual place recognition (fp32)
@@ -48,7 +48,7 @@ Once downloaded, please install the required dependencies to run the network thr
 Dependencies for VPRTempo can downloaded from our [PyPi package](https://pypi.org/project/VPRTempo/).
 
 ```python
-pip3 install vprtempo
+pip3 install VPRTempo
 ```
 If you wish to enable CUDA, please follow the instructions on the [PyTorch - Get Started](https://pytorch.org/get-started/locally/) page to install the required software versions for your hardware and operating system.
 
@@ -95,12 +95,30 @@ For convenience, all data should be organised in the `./dataset` folder in the f
 Running `nordland.py` script will automatically do this for you.
 ## Usage
 Running VPRTempo and VPRTempoQuant is handlded by `main.py`, which can be operated either through the command terminal or directly running the script. See below for more details.
-### Pre-requisites
+### Prerequisites
 * Training and testing data is organized as above (see **Datasets** on how to set up the Nordland dataset)
 * The VPRTempo dependencies have been installed and/or the conda environment has been activated
 
-### Pre-trained model
+### Pretrained models
+We provide two pretrained models, for `VPRTempo` and `VPRTempoQuant`, that have learned a 500 place sequence from two Nordland traversals (Spring & Fall) which can be used to inference with Summer or Winter. To get the pretrained models, please download them:
 
+```console
+# Ensure your directory is set to VPRTempo
+cd ~/VPRTempo
+
+# If not already installed, install Git lfs
+git lfs install
+
+# Download the pretrained models
+git lfs pull
+```
+### Run the inference network
+To run the inference network, there are two options:
+
+#### Command terminal
+```console
+python main.py
+```
 
 ## Issues, bugs, and feature requests
 If you encounter problems whilst running the code or if you have a suggestion for a feature or improvement, please report it as an [issue](https://github.com/QVPR/VPRTempo/issues).
