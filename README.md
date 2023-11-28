@@ -1,9 +1,10 @@
-# VPRTempo - Temporally encoded spiking neural network for visual place recognition
+# VPRTempo - A Temporally Encoded Spiking Neural Network for Visual Place Recognition
 ![PyTorch](https://img.shields.io/badge/PyTorch-%23EE4C2C.svg?style=for-the-badge&logo=PyTorch&logoColor=white)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 [![stars](https://img.shields.io/github/stars/QVPR/VPRTempo.svg?style=flat-square)](https://github.com/QVPR/VPRTempo/stargazers)
 [![QUT Centre for Robotics](https://img.shields.io/badge/collection-QUT%20Robotics-%23043d71?style=flat-square)](https://qcr.ai)
 ![GitHub repo size](https://img.shields.io/github/repo-size/QVPR/VPRTempo.svg?style=flat-square)
+[![PyPI downloads](https://img.shields.io/pypi/dw/VPRTempo.svg)](https://pypistats.org/packages/VPRTempo)
 
 This repository contains code for VPRTempo, a spiking neural network that uses temporally encoding to perform visual place recognition tasks. The network is based off of [BLiTNet](https://arxiv.org/pdf/2208.01204.pdf) and adapted to the [VPRSNN](https://github.com/QVPR/VPRSNN) framework. 
 
@@ -34,7 +35,7 @@ If you use our code, please cite the following [paper](https://arxiv.org/abs/230
 }
 ```
 ## Installation and setup
-VPRTempo uses [PyTorch](https://pytorch.org/) with [CUDA](https://developer.nvidia.com/cuda-toolkit) GPU acceleration. Follow the installation instructions based on your operating system and hardware specifications. MacOS has no compatibly with CUDA.
+VPRTempo uses [PyTorch](https://pytorch.org/) with the capability for [CUDA](https://developer.nvidia.com/cuda-toolkit) acceleration. Please use one of the following options below to install the required dependencies, and if desired follow the instructions to install CUDA for your hardware and operating system.
 ### Get the repository
 Download the Github repository.
 ```console
@@ -44,26 +45,20 @@ cd ~/VPRTempo
 Once downloaded, please install the required dependencies to run the network through one of the following options:
 
 ### Option 1: Pip install
-Dependencies for VPRTempo can downloaded from our PyPi package.
+Dependencies for VPRTempo can downloaded from our [PyPi package](https://pypi.org/project/VPRTempo/).
 
-```console
-# For Windows/Linux systems
-!pip install vprtempo
-
-# For MacOS
-!pip install vprtempomacos
+```python
+pip3 install vprtempo
 ```
+If you wish to enable CUDA, please follow the instructions on the [PyTorch - Get Started](https://pytorch.org/get-started/locally/) page to install the required software versions for your hardware and operating system.
 
 ### Option 2: Local requirements install
 Dependencies can be installed either through our provided `requirements.txt` files.
 
-```console
-# For Windows/Linux
-!pip install -r requirements.txt
-
-# For MacOS
-!pip instal -r requirements_macos.txt
+```python
+pip3 install -r requirements.txt
 ```
+As above, if you wish to install CUDA please visit [PyTorch - Get Started](https://pytorch.org/get-started/locally/).
 ### Option 3: Conda install
 >**:heavy_exclamation_mark: Recommended:**
 > Use [Mambaforge](https://mamba.readthedocs.io/en/latest/installation.html) instead of conda.
@@ -88,26 +83,24 @@ VPRTempo was developed and tested using the [Nordland](https://webdiis.unizar.es
 To simplify first usage, we have set the defaults in `VPRTempo.py` to train and test on a small subset of Nordland data. We recommend [downloading Nordland](https://webdiis.unizar.es/~jmfacil/pr-nordland/#download-dataset) and using the `./src/nordland.py` script to unzip and organize the images into the correct file and naming structure.
 
 ### Custom datasets
-In general, data should be organised in the `./dataset` folder in the following way in order to train the network on multiple traversals of the same location.
+For convenience, all data should be organised in the `./dataset` folder in the following way in order to train the network on multiple traversals of the same location.
 
 ```
 --dataset
-  |--training
-  |  |--traversal_1
-  |  |--traversal_2
-  |
-  |--testing
-  |  |--test_traversal
+  |--traversal_1
+  |--traversal_2
+  |-- ...
+  |--test_traversal
 ```
-If you wish to specify a different directory where data is stored, modify the `--data_dir` default argument in `main.py`. Similarly, if you wish to train/query different traversals modify `--database_dirs` and `--query_dir` in `main.py` accordingly.
-
+Running `nordland.py` script will automatically do this for you.
 ## Usage
-Both the training and testing is handled by the `VPRTempo.py` script. Initial installs do not contain any pre-defined networks and will need to be trained prior to use.
+Running VPRTempo and VPRTempoQuant is handlded by `main.py`, which can be operated either through the command terminal or directly running the script. See below for more details.
 ### Pre-requisites
-* Training and testing data is organized as above (see **Datasets** on how to set up the Nordland or custom datasets)
-* The VPRTempo `conda` environment has been activated
+* Training and testing data is organized as above (see **Datasets** on how to set up the Nordland dataset)
+* The VPRTempo dependencies have been installed and/or the conda environment has been activated
 
-Once these two things have been setup, run `VPRTempo.py` to train and test your first network with the default settings. 
+### Pre-trained model
+
 
 ## Issues, bugs, and feature requests
 If you encounter problems whilst running the code or if you have a suggestion for a feature or improvement, please report it as an [issue](https://github.com/QVPR/VPRTempo/issues).
