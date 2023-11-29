@@ -1,6 +1,5 @@
 import os
 import math
-import cv2
 import torch
 
 import pandas as pd
