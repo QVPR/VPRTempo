@@ -15,5 +15,3 @@ dataset/winter/
 dataset/event.csv/
 models/VPRTempo78415685001.pth
 models/VPRTempoQuant78415685001.pth
-models/VPRTempo313662725001.pth
-models/VPRTempoQuant313662725001.pth
