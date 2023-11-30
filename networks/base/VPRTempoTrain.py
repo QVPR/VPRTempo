@@ -44,32 +44,35 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 class VPRTempoTrain(nn.Module):
-    def __init__(self, args):
+    def __init__(self, args, dims, logger):
         super(VPRTempoTrain, self).__init__()
 
         # Set the arguments
         self.args = args
         for arg in vars(args):
             setattr(self, arg, getattr(args, arg))
+        setattr(self, 'dims', dims)
+        if torch.cuda.is_available():
+            self.device = "cuda:0"
+        else:
+            self.device = "cpu"
+        self.logger = logger
 
         # Set the dataset file
         self.dataset_file = os.path.join('./dataset', self.dataset + '.csv')
-
-        # Configure the model logger and get the device
-        self.device = model_logger(self)  
 
         # Layer dict to keep track of layer names and their order
         self.layer_dict = {}
         self.layer_counter = 0
 
         # Define layer architecture
-        self.input = int(args.dims[0]*args.dims[1])
+        self.input = int(dims[0]*dims[1])
         self.feature = int(self.input * 2)
         self.output = int(args.num_places / args.num_modules)
 
         # Set the total timestep count
         self.location_repeat = len(args.database_dirs) # Number of times to repeat the locations
-        self.T = int((self.num_places / self.num_modules) * self.location_repeat * self.epoch)
+        self.T = int((self.num_places/self.num_modules) * self.location_repeat * self.epoch)
 
         """
         Define trainable layers here
@@ -130,7 +133,7 @@ class VPRTempoTrain(nn.Module):
             
         return layer
 
-    def train_model(self, train_loader, layer, prev_layers=None):
+    def train_model(self, train_loader, layer, model, model_num, prev_layers=None):
         """
         Train a layer of the network model.
 
@@ -141,24 +144,25 @@ class VPRTempoTrain(nn.Module):
 
         # Initialize the tqdm progress bar
         pbar = tqdm(total=int(self.T),
-                    desc="Training ",
+                    desc=f"Module {model_num+1}",
                     position=0)
         
         # Initialize the learning rates for each layer (used for annealment)
         init_itp = layer.eta_ip.detach()
         init_stdp = layer.eta_stdp.detach()
         mod = 0  # Used to determine the learning rate annealment, resets at each epoch
+        
         # Run training for the specified number of epochs
         for _ in range(self.epoch):
             # Run training for the specified number of timesteps
             for spikes, labels in train_loader:
                 spikes, labels = spikes.to(self.device), labels.to(self.device)
-                idx = labels / self.filter # Set output index for spike forcing
+                idx = (torch.round(labels/(model_num+1))) / self.filter # Set output index for spike forcing
                 # Pass through previous layers if they exist
                 if prev_layers:
                     with torch.no_grad():
                         for prev_layer_name in prev_layers:
-                            prev_layer = getattr(self, prev_layer_name) # Get the previous layer object
+                            prev_layer = getattr(model, prev_layer_name) # Get the previous layer object
                             spikes = self.forward(spikes, prev_layer) # Pass spikes through the previous layer
                             spikes = bn.clamp_spikes(spikes, prev_layer) # Clamp spikes [0, 0.9]
                 else:
@@ -199,11 +203,15 @@ class VPRTempoTrain(nn.Module):
         
         return spikes 
     
-    def save_model(self, model_out):    
+    def save_model(self,models, model_out):    
         """
         Save the trained model to models output folder.
         """
-        torch.save(self.state_dict(), model_out) 
+        state_dicts = {}
+        for i, model in enumerate(models):  # Assuming models_list is your list of models
+            state_dicts[f'model_{i}'] = model.state_dict()
+
+        torch.save(state_dicts, model_out)
             
 def generate_model_name(model):
     """
@@ -226,7 +234,7 @@ def check_pretrained_model(model_name):
         return retrain == 'n'
     return False
 
-def train_new_model(model, model_name):
+def train_new_model(models, model_name):
     """
     Train a new model.
 
@@ -236,35 +244,46 @@ def train_new_model(model, model_name):
     """
     # Initialize the image transforms and datasets
     image_transform = transforms.Compose([
-        ProcessImage(model.dims, model.patches)
+        ProcessImage(models[0].dims, models[0].patches)
     ])
-    train_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
-                                      base_dir=model.data_dir,
-                                      img_dirs=model.database_dirs,
-                                      transform=image_transform,
-                                      skip=model.filter,
-                                      max_samples=model.num_places,
-                                      test=False)
-    # Initialize the data loader
-    train_loader = DataLoader(train_dataset, 
-                              batch_size=1, 
-                              shuffle=True,
-                              num_workers=8,
-                              persistent_workers=True)
-    # Set the model to training mode and move to device
-    model.train()
+    # Automatically generate user_input_ranges
+    user_input_ranges = []
+    start_idx = 0
+
+    for _ in range(models[0].num_modules):
+        range_temp = [start_idx, start_idx+((models[0].max_module-1)*models[0].filter)]
+        user_input_ranges.append(range_temp)
+        start_idx = range_temp[1] + models[0].filter
+
     # Keep track of trained layers to pass data through them
     trained_layers = [] 
     # Training each layer
-    for layer_name, _ in sorted(model.layer_dict.items(), key=lambda item: item[1]):
+    for layer_name, _ in sorted(models[0].layer_dict.items(), key=lambda item: item[1]):
         print(f"Training layer: {layer_name}")
         # Retrieve the layer object
-        layer = getattr(model, layer_name)
-        # Train the layer
-        model.train_model(train_loader, layer, prev_layers=trained_layers)
+        for i, model in enumerate(models):
+            model.train()
+            layer = (getattr(model, layer_name))
+            img_range=user_input_ranges[i]
+            train_dataset = CustomImageDataset(annotations_file=models[0].dataset_file, 
+                                    base_dir=models[0].data_dir,
+                                    img_dirs=models[0].database_dirs,
+                                    transform=image_transform,
+                                    skip=models[0].filter,
+                                    test=False,
+                                    img_range=img_range)
+            # Initialize the data loader
+            train_loader = DataLoader(train_dataset, 
+                                    batch_size=1, 
+                                    shuffle=True,
+                                    num_workers=8,
+                                    persistent_workers=True)
+            # Train the layers
+            model.train_model(train_loader, layer, model, i, prev_layers=trained_layers)
         # After training the current layer, add it to the list of trained layers
         trained_layers.append(layer_name)
-    # Convert the model to a quantized model
-    model.eval()
+    # Convert the model to evaluation mode
+    for model in models:
+        model.eval()
     # Save the model
-    model.save_model(os.path.join('./models', model_name))    
+    model.save_model(models,os.path.join('./models', model_name))    
