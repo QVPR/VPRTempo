@@ -50,14 +50,14 @@ from metrics import recallAtK
 #from main import parse_network
 
 class VPRTempoQuant(nn.Module):
-    def __init__(self, args):
+    def __init__(self, args, dims):
         super(VPRTempoQuant, self).__init__()
 
         # Set the arguments
         self.args = args
         for arg in vars(args):
             setattr(self, arg, getattr(args, arg))
-
+        setattr(self, 'dims', dims)
         # Set the dataset file
         self.dataset_file = os.path.join('./dataset', self.dataset + '.csv')
 
@@ -73,7 +73,7 @@ class VPRTempoQuant(nn.Module):
         self.layer_counter = 0
 
         # Define layer architecture
-        self.input = int(args.dims[0]*args.dims[1])
+        self.input = int(self.dims[0]*self.dims[1])
         self.feature = int(self.input * 2)
         self.output = int(args.num_places / args.num_modules)
 

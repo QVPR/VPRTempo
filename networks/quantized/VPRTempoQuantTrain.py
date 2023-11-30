@@ -45,14 +45,14 @@ from torch.ao.quantization import QuantStub, DeQuantStub
 from tqdm import tqdm
 
 class VPRTempoQuantTrain(nn.Module):
-    def __init__(self, args):
+    def __init__(self, args,dims):
         super(VPRTempoQuantTrain, self).__init__()
 
         # Set the arguments
         self.args = args
         for arg in vars(args):
             setattr(self, arg, getattr(args, arg))
-
+        setattr(self, 'dims', dims)
         # Configure the network
         self.device = model_logger_quant(self)
 
@@ -68,7 +68,7 @@ class VPRTempoQuantTrain(nn.Module):
         self.layer_counter = 0
 
         # Define layer architecture
-        self.input = int(args.dims[0]*args.dims[1])
+        self.input = int(self.dims[0]*self.dims[1])
         self.feature = int(self.input * 2)
         self.output = int(args.num_places / args.num_modules)
 
