@@ -257,7 +257,10 @@ def train_new_model(models, model_name):
         range_temp = [start_idx, start_idx+((models[0].max_module-1)*models[0].filter)]
         user_input_ranges.append(range_temp)
         start_idx = range_temp[1] + models[0].filter
-
+    if models[0].num_places < models[0].max_module:
+        max_samples=models[0].num_places
+    else:
+        max_samples = models[0].max_module
     # Keep track of trained layers to pass data through them
     trained_layers = [] 
     # Training each layer
@@ -274,7 +277,8 @@ def train_new_model(models, model_name):
                                     transform=image_transform,
                                     skip=models[0].filter,
                                     test=False,
-                                    img_range=img_range)
+                                    img_range=img_range,
+                                    max_samples=max_samples)
             # Initialize the data loader
             train_loader = DataLoader(train_dataset, 
                                     batch_size=1, 
