@@ -37,7 +37,6 @@ import blitnet as bn
 import numpy as np
 import torch.nn as nn
 
-from loggers import model_logger
 from dataset import CustomImageDataset, ProcessImage
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -45,26 +44,30 @@ from prettytable import PrettyTable
 from metrics import recallAtK
 
 class VPRTempo(nn.Module):
-    def __init__(self, args):
+    def __init__(self, dims, args=None, logger=None):
         super(VPRTempo, self).__init__()
 
         # Set the arguments
-        self.args = args
-        for arg in vars(args):
-            setattr(self, arg, getattr(args, arg))
+        if args is not None:
+            self.args = args
+            for arg in vars(args):
+                setattr(self, arg, getattr(args, arg))
+        setattr(self, 'dims', dims)
+        if torch.cuda.is_available():
+            self.device = "cuda:0"
+        else:
+            self.device = "cpu"
 
+        self.logger = logger
         # Set the dataset file
-        self.dataset_file = os.path.join('./dataset', self.dataset + '.csv')
-
-        # Set the model logger and return the device
-        self.device = model_logger(self)    
+        self.dataset_file = os.path.join('./dataset', self.dataset + '.csv')  
 
         # Layer dict to keep track of layer names and their order
         self.layer_dict = {}
         self.layer_counter = 0
 
         # Define layer architecture
-        self.input = int(args.dims[0]*args.dims[1])
+        self.input = int(self.dims[0]*self.dims[1])
         self.feature = int(self.input * 2)
         self.output = int(args.num_places / args.num_modules)
 
@@ -103,7 +106,7 @@ class VPRTempo(nn.Module):
         self.layer_dict[name] = self.layer_counter
         self.layer_counter += 1                           
 
-    def evaluate(self, model, test_loader, layers=None):
+    def evaluate(self, models, test_loader, layers=None):
         """
         Run the inferencing model and calculate the accuracy.
 
@@ -114,15 +117,16 @@ class VPRTempo(nn.Module):
         pbar = tqdm(total=self.num_places,
                     desc="Running the test network",
                     position=0)
-        
-        self.inference = nn.Sequential(
-            self.feature_layer.w,
-            nn.Hardtanh(0, 0.9),
-            nn.ReLU(),
-            self.output_layer.w,
-            nn.Hardtanh(0, 0.9),
-            nn.ReLU()
-        )
+        self.inferences = []
+        for model in models:
+            self.inferences.append(nn.Sequential(
+                model.feature_layer.w,
+                nn.Hardtanh(0, 0.9),
+                nn.ReLU(),
+                model.output_layer.w,
+                nn.Hardtanh(0, 0.9),
+                nn.ReLU()
+            ))
         # Initiliaze the output spikes variable
         out = []
         # Run inference for the specified number of timesteps
@@ -131,7 +135,6 @@ class VPRTempo(nn.Module):
             spikes, labels = spikes.to(self.device), labels.to(self.device)
             # Forward pass
             spikes = self.forward(spikes)
-
             # Add output spikes to list
             out.append(spikes.detach().cpu().tolist())
             pbar.update(1)
@@ -156,7 +159,7 @@ class VPRTempo(nn.Module):
         table = PrettyTable()
         table.field_names = ["N", "1", "5", "10", "15", "20", "25"]
         table.add_row(["Recall", R[0], R[1], R[2], R[3], R[4], R[5]])
-        model.logger.info(table)
+        print(table)
 
     def forward(self, spikes):
         """
@@ -168,19 +171,30 @@ class VPRTempo(nn.Module):
         Returns:
         - Tensor: Output after processing.
         """
+
+        in_spikes = spikes.detach().clone()
+        outputs = []  # List to collect output tensors
+
+        for inference in self.inferences:
+            out_spikes = inference(in_spikes)
+            outputs.append(out_spikes)  # Append the output tensor to the list
+
+        # Concatenate along the desired dimension
+        concatenated_output = torch.cat(outputs, dim=1)
         
-        spikes = self.inference(spikes)
+        return concatenated_output
         
-        return spikes
-        
-    def load_model(self, model_path):
+    def load_model(self, models, model_path):
         """
         Load pre-trained model and set the state dictionary keys.
         """
-        self.load_state_dict(torch.load(model_path, map_location=self.device),
-                             strict=False)
+        combined_state_dict = torch.load(model_path, map_location=self.device)
 
-def run_inference(model, model_name):
+        for i, model in enumerate(models):  # models_classes is a list of model classes
+            model.load_state_dict(combined_state_dict[f'model_{i}'])
+            model.eval()  # Set the model to inference mode
+
+def run_inference(models, model_name):
     """
     Run inference on a pre-trained model.
 
@@ -189,27 +203,26 @@ def run_inference(model, model_name):
     :param qconfig: Quantization configuration
     """
     # Initialize the image transforms and datasets
-    image_transform = ProcessImage(model.dims, model.patches)
-    test_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
-                                      base_dir=model.data_dir,
-                                      img_dirs=model.query_dir,
+    image_transform = ProcessImage(models[0].dims, models[0].patches)
+    test_dataset = CustomImageDataset(annotations_file=models[0].dataset_file, 
+                                      base_dir=models[0].data_dir,
+                                      img_dirs=models[0].query_dir,
                                       transform=image_transform,
-                                      skip=model.filter,
-                                      max_samples=model.num_places)
+                                      skip=models[0].filter,
+                                      max_samples=models[0].num_places)
     # Initialize the data loader
     test_loader = DataLoader(test_dataset, 
                              batch_size=1, 
                              shuffle=False,
                              num_workers=8,
                              persistent_workers=True)
-    # Set the model to evaluation mode and set configuration
-    model.eval()
 
     # Load the model
-    model.load_model(os.path.join('./models', model_name))
+    models[0].load_model(models, os.path.join('./models', model_name))
 
     # Retrieve layer names for inference
-    layer_names = list(model.layer_dict.keys())
+    layer_names = list(models[0].layer_dict.keys())
 
     # Use evaluate method for inference accuracy
-    model.evaluate(model, test_loader, layers=layer_names)
+    with torch.no_grad():
+        models[0].evaluate(models, test_loader, layers=layer_names)

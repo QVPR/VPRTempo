@@ -1,6 +1,5 @@
 import os
 import math
-import cv2
 import torch
 
 import pandas as pd
@@ -160,21 +159,22 @@ class ProcessImage:
 
 class CustomImageDataset(Dataset):
     def __init__(self, annotations_file, base_dir, img_dirs, transform=None, target_transform=None, 
-                 skip=1, max_samples=None, test=True):
+                 skip=1, max_samples=None, test=True, img_range=None):
         self.transform = transform
         self.target_transform = target_transform
         self.skip = skip
-        
+        self.img_range = img_range
+
         # Load image labels from each directory, apply the skip and max_samples, and concatenate
         self.img_labels = []
         for img_dir in img_dirs:
 
             img_labels = pd.read_csv(annotations_file)
             img_labels['file_path'] = img_labels.apply(lambda row: os.path.join(base_dir,img_dir, row.iloc[0]), axis=1)
-            
+            if self.img_range is not None:
+                img_labels = img_labels.iloc[self.img_range[0]:self.img_range[1]+1]
             # Select specific rows based on the skip parameter
             img_labels = img_labels.iloc[::skip]
-            
             # Limit the number of samples to max_samples if specified
             if max_samples is not None:
                 img_labels = img_labels.iloc[:max_samples]
