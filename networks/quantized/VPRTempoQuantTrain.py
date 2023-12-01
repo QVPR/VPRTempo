@@ -37,24 +37,28 @@ import blitnet as bn
 import numpy as np
 import torch.nn as nn
 import torch.quantization as quantization
+import torchvision.transforms as transforms
 
-from loggers import model_logger_quant
 from dataset import CustomImageDataset, ProcessImage
 from torch.utils.data import DataLoader
 from torch.ao.quantization import QuantStub, DeQuantStub
 from tqdm import tqdm
 
 class VPRTempoQuantTrain(nn.Module):
-    def __init__(self, args):
+    def __init__(self, args, dims, logger):
         super(VPRTempoQuantTrain, self).__init__()
 
         # Set the arguments
         self.args = args
         for arg in vars(args):
             setattr(self, arg, getattr(args, arg))
+        setattr(self, 'dims', dims)
+        
+        # Only CPU available for quantization
+        self.device = "cpu"
 
-        # Configure the network
-        self.device = model_logger_quant(self)
+        # Set the logger
+        self.logger = logger
 
         # Set the dataset file
         self.dataset_file = os.path.join('./dataset', self.dataset + '.csv')
@@ -68,7 +72,7 @@ class VPRTempoQuantTrain(nn.Module):
         self.layer_counter = 0
 
         # Define layer architecture
-        self.input = int(args.dims[0]*args.dims[1])
+        self.input = int(dims[0]*dims[1])
         self.feature = int(self.input * 2)
         self.output = int(args.num_places / args.num_modules)
 
@@ -129,7 +133,7 @@ class VPRTempoQuantTrain(nn.Module):
             
         return layer
 
-    def train_model(self, train_loader, layer, prev_layers=None):
+    def train_model(self, train_loader, layer, model, model_num, prev_layers=None):
         """
         Train a layer of the network model.
 
@@ -147,12 +151,14 @@ class VPRTempoQuantTrain(nn.Module):
         init_itp = layer.eta_ip.detach()
         init_stdp = layer.eta_stdp.detach()
         mod = 0  # Used to determine the learning rate annealment, resets at each epoch
+        # idx scale factor for different modules
+        idx_scale = (self.max_module*self.filter)*model_num
         # Run training for the specified number of epochs
         for epoch in range(self.epoch):
             # Run training for the specified number of timesteps
             for spikes, labels in train_loader:
                 spikes, labels = spikes.to(self.device), labels.to(self.device)
-                idx = labels / self.filter # Set output index for spike forcing
+                idx = torch.round((labels - idx_scale) / self.filter) # Set output index for spike forcing
                 # Pass through previous layers if they exist
                 if prev_layers:
                     with torch.no_grad():
@@ -195,11 +201,15 @@ class VPRTempoQuantTrain(nn.Module):
         
         return spikes
     
-    def save_model(self, model_out):    
+    def save_model(self, models, model_out):    
         """
         Save the trained model to models output folder.
         """
-        torch.save(self.state_dict(), model_out) 
+        state_dicts = {}
+        for i, model in enumerate(models):  # Assuming models_list is your list of models
+            state_dicts[f'model_{i}'] = model.state_dict()
+
+        torch.save(state_dicts, model_out)
             
 def generate_model_name_quant(model):
     """
@@ -222,7 +232,7 @@ def check_pretrained_model(model_name):
         return retrain == 'n'
     return False
 
-def train_new_model_quant(model, model_name, qconfig):
+def train_new_model_quant(models, model_name, qconfig):
     """
     Train a new model.
 
@@ -231,42 +241,47 @@ def train_new_model_quant(model, model_name, qconfig):
     :param qconfig: Quantization configuration
     """
     # Initialize the image transforms and datasets
-    image_transform = ProcessImage(model.dims, model.patches)
-    train_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
-                                      base_dir=model.data_dir,
-                                      img_dirs=model.database_dirs,
-                                      transform=image_transform,
-                                      skip=model.filter,
-                                      max_samples=model.num_places,
-                                      test=False)
-    # Initialize the data loader
-    train_loader = DataLoader(train_dataset, 
-                              batch_size=1, 
-                              shuffle=True,
-                              num_workers=8,
-                              persistent_workers=True)
-    # Set the model to training mode and move to device
-    model.train()
-    model.to('cpu')
-    model.qconfig = qconfig
+    image_transform = transforms.Compose([
+        ProcessImage(models[0].dims, models[0].patches)
+    ])
+    # Automatically generate user_input_ranges
+    user_input_ranges = []
+    start_idx = 0
 
-    # Apply quantization configurations to the model
-    model = quantization.prepare_qat(model, inplace=False)
+    for _ in range(models[0].num_modules):
+        range_temp = [start_idx, start_idx+((models[0].max_module-1)*models[0].filter)]
+        user_input_ranges.append(range_temp)
+        start_idx = range_temp[1] + models[0].filter
 
     # Keep track of trained layers to pass data through them
-    trained_layers = [] 
-
     # Training each layer
-    for layer_name, _ in sorted(model.layer_dict.items(), key=lambda item: item[1]):
-        print(f"Training layer: {layer_name}")
-        # Retrieve the layer object
-        layer = getattr(model, layer_name)
-        # Train the layer
-        model.train_model(train_loader, layer, prev_layers=trained_layers)
-        # After training the current layer, add it to the list of trained layers
-        trained_layers.append(layer_name)
-    # Convert the model to a quantized model
-    model = quantization.convert(model, inplace=False)
-    model.eval()
+    trained_models = []
+    for i, model in enumerate(models):
+        trained_layers = [] 
+        img_range=user_input_ranges[i]
+        train_dataset = CustomImageDataset(annotations_file=models[0].dataset_file, 
+                                base_dir=models[0].data_dir,
+                                img_dirs=models[0].database_dirs,
+                                transform=image_transform,
+                                skip=models[0].filter,
+                                test=False,
+                                img_range=img_range)
+        # Initialize the data loader
+        train_loader = DataLoader(train_dataset, 
+                                batch_size=1, 
+                                shuffle=True,
+                                num_workers=8,
+                                persistent_workers=True)
+        model = quantization.prepare_qat(model, inplace=False)
+        for layer_name, _ in sorted(models[0].layer_dict.items(), key=lambda item: item[1]):
+            print(f"Training layer: {layer_name}")
+            layer = (getattr(model, layer_name))
+
+            # Train the layers
+            model.train_model(train_loader, layer, model, i, prev_layers=trained_layers)
+            trained_layers.append(layer_name) 
+        trained_models.append(quantization.convert(model, inplace=False))
+        # After training the current layer, add it to the list of trained layer
+
     # Save the model
-    model.save_model(os.path.join('./models', model_name))
+    model.save_model(trained_models,os.path.join('./models', model_name))   
