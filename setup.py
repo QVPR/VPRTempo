@@ -9,22 +9,20 @@ with open(os.path.join(here, 'README.md'), encoding='utf-8') as f:
 
 # define the base requires needed for the repo
 requirements = [ 
-                'matplotlib',
                 'torch',
                 'torchvision',
                 'torchaudio',
+                'numpy',
+                'pandas',
+                'tqdm',
+                'prettytable',
+                'scikit-learn'
                 ]
-
-# workaround as opencv-python does not show up in "pip list" within a conda environment
-# we do not care as conda recipe has py-opencv requirement anyhow
-is_conda = os.path.exists(os.path.join(sys.prefix, 'conda-meta'))
-if not is_conda:
-    requirements.append('opencv-python')
 
 # define the setup
 setup(
     name="VPRTempo",
-    version="1.0.1",
+    version="1.1.0",
     description='VPRTempo: A Fast Temporally Encoded Spiking Neural Network for Visual Place Recognition',
     long_description=long_description,
     long_description_content_type='text/markdown',
@@ -33,12 +31,12 @@ setup(
     url='https://github.com/QVPR/VPRTempo',
     license='MIT',
     install_requires=requirements,
-    python_requires='>=3.8',
+    python_requires='>=3.6',
     classifiers=[
         #   3 - Alpha
         #   4 - Beta
         #   5 - Production/Stable
-        'Development Status :: 4 - Beta',
+        'Development Status :: 5 - Production/Stable',
 
         # Indicate who your project is intended for
         'Intended Audience :: Developers',
@@ -55,6 +53,5 @@ setup(
     packages=find_packages(),
     keywords=['python', 'place recognition', 'spiking neural networks',
               'computer vision', 'robotics'],
-    scripts=['VPRTempo.py'],
-    package_data={'':['nordland_imageNames.txt','orc_imageNames.txt']}
+    scripts=['main.py'],
 )

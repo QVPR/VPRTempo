@@ -1,10 +1,30 @@
+Metadata-Version: 2.1
+Name: VPRTempo
+Version: 0.2.0
+Summary: VPRTempo: A Fast Temporally Encoded Spiking Neural Network for Visual Place Recognition
+Home-page: https://github.com/QVPR/VPRTempo
+Author: Adam D Hines, Peter G Stratton, Michael Milford and Tobias Fischer
+Author-email: adam.hines@qut.edu.au
+License: MIT
+Keywords: python,place recognition,spiking neural networks,computer vision,robotics
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3.6
+Classifier: Programming Language :: Python :: 3.7
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Requires-Python: >=3.6
+Description-Content-Type: text/markdown
+License-File: LICENSE
+
 # VPRTempo - A Temporally Encoded Spiking Neural Network for Visual Place Recognition
 ![PyTorch](https://img.shields.io/badge/PyTorch-%23EE4C2C.svg?style=for-the-badge&logo=PyTorch&logoColor=white)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 [![stars](https://img.shields.io/github/stars/QVPR/VPRTempo.svg?style=flat-square)](https://github.com/QVPR/VPRTempo/stargazers)
 [![QUT Centre for Robotics](https://img.shields.io/badge/collection-QUT%20Robotics-%23043d71?style=flat-square)](https://qcr.ai)
 ![GitHub repo size](https://img.shields.io/github/repo-size/QVPR/VPRTempo.svg?style=flat-square)
-[![PyPI downloads](https://img.shields.io/pypi/dw/VPRTempo.svg)](https://pypistats.org/packages/vprtempo)
+[![PyPI downloads](https://img.shields.io/pypi/dw/VPRTempo.svg)](https://pypistats.org/packages/VPRTempo)
 
 This repository contains code for VPRTempo, a spiking neural network that uses temporally encoding to perform visual place recognition tasks. The network is based off of [BLiTNet](https://arxiv.org/pdf/2208.01204.pdf) and adapted to the [VPRSNN](https://github.com/QVPR/VPRSNN) framework. 
 
@@ -12,21 +32,13 @@ This repository contains code for VPRTempo, a spiking neural network that uses t
   <img src="./assets/github_image.png" alt="VPRTempo method diagram"/>
 </p>
 
-VPRTempo is built on a [torch.nn](https://pytorch.org/tutorials/beginner/blitz/neural_networks_tutorial.html) framework and employs custom learning rules based on the temporal codes of spikes in order to train layer weights. 
+VPRTempo is built on a [torch.nn](https://pytorch.org/tutorials/beginner/blitz/neural_networks_tutorial.html) network that employs custom learning rules based on the temporal codes of spikes in order to train layer weights. 
 
 In this repository, we provide two networks: 
   - `VPRTempo`: Our base network architecture to perform visual place recognition (fp32)
   - `VPRTempoQuant`: A modified base network with [Quantization Aware Training (QAT)](https://pytorch.org/docs/stable/quantization.html) enabled (int8)
 
 To use VPRTempo, please follow the instructions below for installation and usage.
-
-## :star: Update v1.1.0: What's new?
-  - Full integration of VPRTempo into torch.nn architecture
-  - Quantization Aware Training (QAT) enabled to train weights in int8 space
-  - Addition of tutorials in Jupyter Notebooks to learn how to use VPRTempo as well as explain the computational logic
-  - Simplification of weight operations, reducing to a single weight tensor - allowing positive and negative connections to change sign during training
-  - Easier dependency installation with PyPi/pip
-  - And more!
 
 ## License & Citation
 This repository is licensed under the [MIT License](./LICENSE) 
@@ -56,7 +68,7 @@ Once downloaded, please install the required dependencies to run the network thr
 Dependencies for VPRTempo can downloaded from our [PyPi package](https://pypi.org/project/VPRTempo/).
 
 ```python
-pip3 install VPRTempo
+pip3 install vprtempo
 ```
 If you wish to enable CUDA, please follow the instructions on the [PyTorch - Get Started](https://pytorch.org/get-started/locally/) page to install the required software versions for your hardware and operating system.
 
@@ -90,78 +102,25 @@ VPRTempo was developed and tested using the [Nordland](https://webdiis.unizar.es
 
 To simplify first usage, we have set the defaults in `VPRTempo.py` to train and test on a small subset of Nordland data. We recommend [downloading Nordland](https://webdiis.unizar.es/~jmfacil/pr-nordland/#download-dataset) and using the `./src/nordland.py` script to unzip and organize the images into the correct file and naming structure.
 
+### Custom datasets
 For convenience, all data should be organised in the `./dataset` folder in the following way in order to train the network on multiple traversals of the same location.
 
 ```
 --dataset
-  |--summer
-  |--spring
-  |--fall
-  |--winter
+  |--traversal_1
+  |--traversal_2
+  |-- ...
+  |--test_traversal
 ```
-### Custom Datasets
-To define your own custom dataset to use with VPRTempo, you will need to follow the conventions for [PyTorch Datasets & Dataloaders](https://pytorch.org/tutorials/beginner/basics/data_tutorial.html). We provide a simple script `./dataset/custom_dataset.py` which will rename images in user defined directories and generate the necessary `.csv` file to load into VPRTempo. 
-
-To learn how to use custom datasets, please see the [CustomDatasets.ipynb](https://github.com/AdamDHines/VPRTempo-quant/tree/main/tutorials) tutorial.
-
+Running `nordland.py` script will automatically do this for you.
 ## Usage
 Running VPRTempo and VPRTempoQuant is handlded by `main.py`, which can be operated either through the command terminal or directly running the script. See below for more details.
-### Prerequisites
+### Pre-requisites
 * Training and testing data is organized as above (see **Datasets** on how to set up the Nordland dataset)
 * The VPRTempo dependencies have been installed and/or the conda environment has been activated
 
-### Pretrained models
-We provide two pretrained models, for `VPRTempo` and `VPRTempoQuant`, that have learned a 500 place sequence from two Nordland traversals (Spring & Fall) which can be used to inference with Summer or Winter. To get the pretrained models, please download them:
+### Pre-trained model
 
-```console
-# Ensure your directory is set to VPRTempo
-cd ~/VPRTempo
-
-# If not already installed, install Git lfs
-git lfs install
-
-# Download the pretrained models
-git lfs pull
-```
-### Run the inference network
-The `main.py` script handles running the inference network, there are two options:
-
-#### Command terminal
-```console
-python main.py
-```
-<p style="width: 100%; display: block; margin-left: auto; margin-right: auto">
-  <img src="./assets/main_example.gif" alt="Example of the base VPRTempo networking running"/>
-</p>
-
-To run the quantized network, parse the `--quantize` argument.
-```console
-python main.py --quantize
-```
-<p style="width: 100%; display: block; margin-left: auto; margin-right: auto">
-  <img src="./assets/mainquant_example.gif" alt="Example of the quantized VPRTempo networking running"/>
-</p>
-
-#### IDE
-You can also run VPRTempo through your IDE by running `main.py`. Change the `bool` flag for `use_quantize` to `True` if you wish to run VPRTempoQuant.
-
-### Train new network
-If you do not wish to use the pretrained models or you would like to train your own, we can parse the `--train_new_model` flag to `main.py`. Note, if a pretrained model already exists you will be prompted if you would like to retrain it.
-```console
-# For VPRTempo
-python main.py --train_new_model
-
-# For VPRTempoQuant
-python main.py --train_new_model --quantize
-```
-<p style="width: 100%; display: block; margin-left: auto; margin-right: auto">
-  <img src="./assets/train_example.gif" alt="Example of the training VPRTempo networking running"/>
-</p>
-
-Similarly above, if you wish to run the training through an IDE then change the `bool` flag for `train_new_model` to `True`.
-
-## Tutorials
-We provide a series of Jupyter Notebook [tutorials](https://github.com/AdamDHines/VPRTempo-quant/tree/main/tutorials) that go through the basic operations and logic for VPRTempo and VPRTempoQuant. 
 
 ## Issues, bugs, and feature requests
 If you encounter problems whilst running the code or if you have a suggestion for a feature or improvement, please report it as an [issue](https://github.com/QVPR/VPRTempo/issues).
