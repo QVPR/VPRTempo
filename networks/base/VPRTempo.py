@@ -204,12 +204,14 @@ def run_inference(models, model_name):
     """
     # Initialize the image transforms and datasets
     image_transform = ProcessImage(models[0].dims, models[0].patches)
+    max_samples=models[0].num_places
+
     test_dataset = CustomImageDataset(annotations_file=models[0].dataset_file, 
                                       base_dir=models[0].data_dir,
                                       img_dirs=models[0].query_dir,
                                       transform=image_transform,
                                       skip=models[0].filter,
-                                      max_samples=models[0].num_places)
+                                      max_samples=max_samples)
     # Initialize the data loader
     test_loader = DataLoader(test_dataset, 
                              batch_size=1, 
