@@ -152,12 +152,15 @@ class VPRTempoTrain(nn.Module):
         init_stdp = layer.eta_stdp.detach()
         mod = 0  # Used to determine the learning rate annealment, resets at each epoch
         
+        # idx scale factor for different modules
+        idx_scale = (self.max_module*self.filter)*model_num
+
         # Run training for the specified number of epochs
         for _ in range(self.epoch):
             # Run training for the specified number of timesteps
             for spikes, labels in train_loader:
                 spikes, labels = spikes.to(self.device), labels.to(self.device)
-                idx = (torch.round(labels/(model_num+1))) / self.filter # Set output index for spike forcing
+                idx = torch.round((labels - idx_scale) / self.filter) # Set output index for spike forcing
                 # Pass through previous layers if they exist
                 if prev_layers:
                     with torch.no_grad():
