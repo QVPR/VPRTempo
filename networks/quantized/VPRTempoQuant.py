@@ -223,6 +223,7 @@ def run_inference_quant(models, model_name, qconfig):
     :param model_name: Name of the model to load
     :param qconfig: Quantization configuration
     """
+    max_samples = models[0].num_places
     # Initialize the image transforms and datasets
     image_transform = ProcessImage(models[0].dims, models[0].patches)
     test_dataset = CustomImageDataset(annotations_file=models[0].dataset_file, 
@@ -230,7 +231,7 @@ def run_inference_quant(models, model_name, qconfig):
                                       img_dirs=models[0].query_dir,
                                       transform=image_transform,
                                       skip=models[0].filter,
-                                      max_samples=models[0].num_places)
+                                      max_samples=max_samples)
     # Initialize the data loader
     test_loader = DataLoader(test_dataset, 
                              batch_size=1, 
