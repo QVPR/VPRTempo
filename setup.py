@@ -22,7 +22,7 @@ requirements = [
 # define the setup
 setup(
     name="VPRTempo",
-    version="0.2.0",
+    version="1.1.0",
     description='VPRTempo: A Fast Temporally Encoded Spiking Neural Network for Visual Place Recognition',
     long_description=long_description,
     long_description_content_type='text/markdown',
@@ -36,7 +36,7 @@ setup(
         #   3 - Alpha
         #   4 - Beta
         #   5 - Production/Stable
-        'Development Status :: 4 - Beta',
+        'Development Status :: 5 - Production/Stable',
 
         # Indicate who your project is intended for
         'Intended Audience :: Developers',
