@@ -42,16 +42,22 @@ def initialize_and_run_model(args,dims):
     if args.train_new_model:
         # If using quantization aware training
         if args.quantize:
-            # Initialize the quantized model
-            model = VPRTempoQuantTrain(args,dims)
+            models = []
+            logger = model_logger_quant()
             # Get the quantization config
             qconfig = quantization.get_default_qat_qconfig('fbgemm')
+            for _ in range(args.num_modules):
+                # Initialize the model
+                model = VPRTempoQuantTrain(args, dims, logger)
+                model.train()
+                model.qconfig = qconfig
+                models.append(model)
             # Generate the model name
             model_name = generate_model_name_quant(model)
             # Check if the model has been trained before
             check_pretrained_model(model_name)
             # Train the model
-            train_new_model_quant(model, model_name, qconfig)
+            train_new_model_quant(models, model_name, qconfig)
         else: # Normal model
             models = []
             logger = model_logger()
@@ -70,13 +76,16 @@ def initialize_and_run_model(args,dims):
         # Set the quantization configuration
         if args.quantize:
             models = []
-            logger = model_logger()
+            logger = model_logger_quant()
+            qconfig = quantization.get_default_qat_qconfig('fbgemm')
             for _ in range(args.num_modules):
                 # Initialize the model
-                model = VPRTempo(args, dims, logger)
+                model = VPRTempoQuant(dims, args, logger)
+                model.eval()
+                model.qconfig = qconfig
+                model = quantization.prepare(model, inplace=False)
+                model = quantization.convert(model, inplace=False)
                 models.append(model)
-            # Get the quantization config
-            qconfig = quantization.get_default_qat_qconfig('fbgemm')
             # Generate the model name
             model_name = generate_model_name_quant(model)
             # Run the quantized inference model
@@ -104,9 +113,9 @@ def parse_network(use_quantize=False, train_new_model=False):
                             help="Dataset to use for training and/or inferencing")
     parser.add_argument('--data_dir', type=str, default='./dataset/',
                             help="Directory where dataset files are stored")
-    parser.add_argument('--num_places', type=int, default=1000,
+    parser.add_argument('--num_places', type=int, default=500,
                             help="Number of places to use for training and/or inferencing")
-    parser.add_argument('--num_modules', type=int, default=2,
+    parser.add_argument('--num_modules', type=int, default=1,
                             help="Number of expert modules to use split images into")
     parser.add_argument('--max_module', type=int, default=500,
                             help="Maximum number of images per module")
@@ -122,9 +131,9 @@ def parse_network(use_quantize=False, train_new_model=False):
                             help="Number of epochs to train the model")
 
     # Define image transformation parameters
-    parser.add_argument('--patches', type=int, default=7,
+    parser.add_argument('--patches', type=int, default=15,
                             help="Number of patches to generate for patch normalization image into")
-    parser.add_argument('--dims', type=str, default="28,28",
+    parser.add_argument('--dims', type=str, default="56,56",
                         help="Dimensions to resize the image to")
 
     # Define the network functionality
