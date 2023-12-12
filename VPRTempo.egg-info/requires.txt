@@ -1,8 +1,0 @@
-torch
-torchvision
-torchaudio
-numpy
-pandas
-tqdm
-prettytable
-scikit-learn
