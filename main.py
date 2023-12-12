@@ -23,17 +23,16 @@
 '''
 Imports
 '''
-import argparse
 import sys
-sys.path.append('./src')
-sys.path.append('./vprtempo')
+import argparse
+
 import torch.quantization as quantization
 
-from VPRTempoTrain import VPRTempoTrain, generate_model_name, check_pretrained_model, train_new_model
-from VPRTempo import VPRTempo, run_inference
-from VPRTempoQuantTrain import VPRTempoQuantTrain, generate_model_name_quant, train_new_model_quant
-from VPRTempoQuant import VPRTempoQuant, run_inference_quant
-from loggers import model_logger, model_logger_quant
+from vprtempo.VPRTempo import VPRTempo, run_inference
+from vprtempo.src.loggers import model_logger, model_logger_quant
+from vprtempo.VPRTempoQuant import VPRTempoQuant, run_inference_quant
+from vprtempo.VPRTempoQuantTrain import VPRTempoQuantTrain, generate_model_name_quant, train_new_model_quant
+from vprtempo.VPRTempoTrain import VPRTempoTrain, generate_model_name, check_pretrained_model, train_new_model
 
 def initialize_and_run_model(args,dims):
     # If user wants to train a new network
@@ -109,7 +108,7 @@ def parse_network(use_quantize=False, train_new_model=False):
     # Define the dataset arguments
     parser.add_argument('--dataset', type=str, default='nordland',
                             help="Dataset to use for training and/or inferencing")
-    parser.add_argument('--data_dir', type=str, default='./dataset/',
+    parser.add_argument('--data_dir', type=str, default='./vprtempo/dataset/',
                             help="Directory where dataset files are stored")
     parser.add_argument('--num_places', type=int, default=500,
                             help="Number of places to use for training and/or inferencing")
