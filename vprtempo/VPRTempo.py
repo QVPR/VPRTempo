@@ -26,22 +26,16 @@ Imports
 
 import os
 import torch
-import gc
-import sys
-sys.path.append('./src')
-sys.path.append('./models')
-sys.path.append('./output')
-sys.path.append('./dataset')
 
-import blitnet as bn
 import numpy as np
 import torch.nn as nn
+import vprtempo.src.blitnet as bn
 
-from dataset import CustomImageDataset, ProcessImage
-from torch.utils.data import DataLoader
 from tqdm import tqdm
 from prettytable import PrettyTable
-from metrics import recallAtK
+from torch.utils.data import DataLoader
+from vprtempo.src.metrics import recallAtK
+from vprtempo.src.dataset import CustomImageDataset, ProcessImage
 
 class VPRTempo(nn.Module):
     def __init__(self, dims, args=None, logger=None):
@@ -60,7 +54,7 @@ class VPRTempo(nn.Module):
 
         self.logger = logger
         # Set the dataset file
-        self.dataset_file = os.path.join('./dataset', self.dataset + '.csv')  
+        self.dataset_file = os.path.join('./vprtempo/dataset', self.dataset + '.csv')  
 
         # Layer dict to keep track of layer names and their order
         self.layer_dict = {}
@@ -220,7 +214,7 @@ def run_inference(models, model_name):
                              persistent_workers=True)
 
     # Load the model
-    models[0].load_model(models, os.path.join('./models', model_name))
+    models[0].load_model(models, os.path.join('./vprtempo/models', model_name))
 
     # Retrieve layer names for inference
     layer_names = list(models[0].layer_dict.keys())

@@ -5,7 +5,6 @@ import torch
 import pandas as pd
 import numpy as np
 import torch.nn.functional as F
-import torch.quantization as tq
 
 from torchvision.io import read_image
 from torch.utils.data import Dataset
