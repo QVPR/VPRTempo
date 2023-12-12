@@ -20,7 +20,7 @@ In this repository, we provide two networks:
 
 To use VPRTempo, please follow the instructions below for installation and usage.
 
-## :star: Update v1.1.1: What's new?
+## :star: Update v1.1: What's new?
   - Full integration of VPRTempo into torch.nn architecture
   - Quantization Aware Training (QAT) enabled to train weights in int8 space
   - Addition of tutorials in Jupyter Notebooks to learn how to use VPRTempo as well as explain the computational logic
