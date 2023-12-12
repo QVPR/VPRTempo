@@ -26,9 +26,7 @@ Imports
 import argparse
 import sys
 sys.path.append('./src')
-sys.path.append('./networks/base')
-sys.path.append('./networks/quantized')
-
+sys.path.append('./vprtempo')
 import torch.quantization as quantization
 
 from VPRTempoTrain import VPRTempoTrain, generate_model_name, check_pretrained_model, train_new_model

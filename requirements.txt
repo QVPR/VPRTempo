@@ -1,6 +1,5 @@
 torch
 torchvision
-torchaudio
 numpy
 pandas
 tqdm

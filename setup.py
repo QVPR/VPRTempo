@@ -11,7 +11,6 @@ with open(os.path.join(here, 'README.md'), encoding='utf-8') as f:
 requirements = [ 
                 'torch',
                 'torchvision',
-                'torchaudio',
                 'numpy',
                 'pandas',
                 'tqdm',
@@ -22,7 +21,7 @@ requirements = [
 # define the setup
 setup(
     name="VPRTempo",
-    version="1.1.1",
+    version="1.1.2",
     description='VPRTempo: A Fast Temporally Encoded Spiking Neural Network for Visual Place Recognition',
     long_description=long_description,
     long_description_content_type='text/markdown',
@@ -36,7 +35,7 @@ setup(
         #   3 - Alpha
         #   4 - Beta
         #   5 - Production/Stable
-        'Development Status :: 5 - Production/Stable',
+        'Development Status :: 4 - Beta',
 
         # Indicate who your project is intended for
         'Intended Audience :: Developers',
