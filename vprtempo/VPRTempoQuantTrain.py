@@ -26,23 +26,17 @@ Imports
 
 import os
 import torch
-import gc
-import sys
-sys.path.append('./src')
-sys.path.append('./models')
-sys.path.append('./output')
-sys.path.append('./dataset')
 
-import blitnet as bn
 import numpy as np
 import torch.nn as nn
+import vprtempo.src.blitnet as bn
 import torch.quantization as quantization
 import torchvision.transforms as transforms
 
-from dataset import CustomImageDataset, ProcessImage
+from tqdm import tqdm
 from torch.utils.data import DataLoader
 from torch.ao.quantization import QuantStub, DeQuantStub
-from tqdm import tqdm
+from vprtempo.src.dataset import CustomImageDataset, ProcessImage
 
 class VPRTempoQuantTrain(nn.Module):
     def __init__(self, args, dims, logger):
@@ -61,7 +55,7 @@ class VPRTempoQuantTrain(nn.Module):
         self.logger = logger
 
         # Set the dataset file
-        self.dataset_file = os.path.join('./dataset', self.dataset + '.csv')
+        self.dataset_file = os.path.join('./vprtempo/dataset', self.dataset + '.csv')
 
         # Add quantization stubs for Quantization Aware Training (QAT)
         self.quant = QuantStub()
@@ -288,4 +282,4 @@ def train_new_model_quant(models, model_name, qconfig):
         # After training the current layer, add it to the list of trained layer
 
     # Save the model
-    model.save_model(trained_models,os.path.join('./models', model_name))   
+    model.save_model(trained_models,os.path.join('./vprtempo/models', model_name))   

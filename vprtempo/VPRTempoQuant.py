@@ -26,26 +26,17 @@ Imports
 
 import os
 import torch
-import subprocess
-import sys
-sys.path.append('./src')
-sys.path.append('./models')
-sys.path.append('./output')
-sys.path.append('./dataset')
 
-import blitnet as bn
 import numpy as np
 import torch.nn as nn
-import torch.quantization as quantization
+import vprtempo.src.blitnet as bn
 
-from loggers import model_logger_quant
-from VPRTempoQuantTrain import generate_model_name_quant
-from dataset import CustomImageDataset, ProcessImage
-from torch.utils.data import DataLoader
-from torch.ao.quantization import QuantStub, DeQuantStub
 from tqdm import tqdm
 from prettytable import PrettyTable
-from metrics import recallAtK
+from torch.utils.data import DataLoader
+from vprtempo.src.metrics import recallAtK
+from torch.ao.quantization import QuantStub, DeQuantStub
+from vprtempo.src.dataset import CustomImageDataset, ProcessImage
 
 #from main import parse_network
 
@@ -59,7 +50,7 @@ class VPRTempoQuant(nn.Module):
             setattr(self, arg, getattr(args, arg))
         setattr(self, 'dims', dims)
         # Set the dataset file
-        self.dataset_file = os.path.join('./dataset', self.dataset + '.csv')
+        self.dataset_file = os.path.join('./vprtempo/dataset', self.dataset + '.csv')
 
         # Set the model logger and return the device
         self.logger = logger
@@ -240,7 +231,7 @@ def run_inference_quant(models, model_name, qconfig):
                              persistent_workers=True)
 
     # Load the model
-    models[0].load_model(models, os.path.join('./models', model_name))
+    models[0].load_model(models, os.path.join('./vprtempo/models', model_name))
 
     # Use evaluate method for inference accuracy
     with torch.no_grad():
