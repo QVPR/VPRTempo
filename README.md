@@ -56,7 +56,7 @@ Once downloaded, please install the required dependencies to run the network thr
 Dependencies for VPRTempo can downloaded from our [PyPi package](https://pypi.org/project/VPRTempo/).
 
 ```python
-pip3 install VPRTempo
+pip install vprtempo
 ```
 If you wish to enable CUDA, please follow the instructions on the [PyTorch - Get Started](https://pytorch.org/get-started/locally/) page to install the required software versions for your hardware and operating system.
 
