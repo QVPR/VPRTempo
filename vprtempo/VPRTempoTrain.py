@@ -25,23 +25,18 @@ Imports
 '''
 
 import os
-import torch
 import gc
-import sys
-sys.path.append('./src')
-sys.path.append('./models')
-sys.path.append('./output')
-sys.path.append('./dataset')
+import torch
 
-import blitnet as bn
 import numpy as np
 import torch.nn as nn
+import vprtempo.src.blitnet as bn
 import torchvision.transforms as transforms
 
-from loggers import model_logger
-from dataset import CustomImageDataset, ProcessImage
-from torch.utils.data import DataLoader
 from tqdm import tqdm
+from torch.utils.data import DataLoader
+from vprtempo.src.loggers import model_logger
+from vprtempo.src.dataset import CustomImageDataset, ProcessImage
 
 class VPRTempoTrain(nn.Module):
     def __init__(self, args, dims, logger):
@@ -59,7 +54,7 @@ class VPRTempoTrain(nn.Module):
         self.logger = logger
 
         # Set the dataset file
-        self.dataset_file = os.path.join('./dataset', self.dataset + '.csv')
+        self.dataset_file = os.path.join('./vprtempo/dataset', self.dataset + '.csv')
 
         # Layer dict to keep track of layer names and their order
         self.layer_dict = {}
@@ -293,4 +288,4 @@ def train_new_model(models, model_name):
     for model in models:
         model.eval()
     # Save the model
-    model.save_model(models,os.path.join('./models', model_name))    
+    model.save_model(models,os.path.join('./vprtempo/models', model_name))    
