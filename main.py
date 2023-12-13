@@ -25,9 +25,11 @@ Imports
 '''
 import sys
 import argparse
+import torch
 
 import torch.quantization as quantization
 
+from tqdm import tqdm
 from vprtempo.VPRTempo import VPRTempo, run_inference
 from vprtempo.src.loggers import model_logger, model_logger_quant
 from vprtempo.VPRTempoQuant import VPRTempoQuant, run_inference_quant
@@ -61,6 +63,7 @@ def initialize_and_run_model(args,dims):
             for _ in range(args.num_modules):
                 # Initialize the model
                 model = VPRTempoTrain(args, dims, logger)
+                model.to(torch.device('cpu'))
                 models.append(model)
             # Generate the model name
             model_name = generate_model_name(model)
@@ -90,9 +93,10 @@ def initialize_and_run_model(args,dims):
         else:
             models = []
             logger = model_logger()
-            for _ in range(args.num_modules):
+            for _ in tqdm(range(args.num_modules), desc="Initializing modules"):
                 # Initialize the model
                 model = VPRTempo(dims, args, logger)
+                model.to(torch.device('cpu'))
                 models.append(model)
             # Generate the model name
             model_name = generate_model_name(model)
@@ -111,7 +115,9 @@ def parse_network(use_quantize=False, train_new_model=False):
     parser.add_argument('--data_dir', type=str, default='./vprtempo/dataset/',
                             help="Directory where dataset files are stored")
     parser.add_argument('--num_places', type=int, default=500,
-                            help="Number of places to use for training and/or inferencing")
+                            help="Number of places to use for training")
+    parser.add_argument('--query_places', type=int, default=500,
+                            help="Number of places to use for inferencing")
     parser.add_argument('--num_modules', type=int, default=1,
                             help="Number of expert modules to use split images into")
     parser.add_argument('--max_module', type=int, default=500,
