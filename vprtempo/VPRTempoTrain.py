@@ -264,6 +264,7 @@ def train_new_model(models, model_name):
         # Retrieve the layer object
         for i, model in enumerate(models):
             model.train()
+            model.to(torch.device(model.device))
             layer = (getattr(model, layer_name))
             img_range=user_input_ranges[i]
             train_dataset = CustomImageDataset(annotations_file=models[0].dataset_file, 
@@ -282,6 +283,7 @@ def train_new_model(models, model_name):
                                     persistent_workers=True)
             # Train the layers
             model.train_model(train_loader, layer, model, i, prev_layers=trained_layers)
+            model.to(torch.device("cpu"))
         # After training the current layer, add it to the list of trained layers
         trained_layers.append(layer_name)
     # Convert the model to evaluation mode
