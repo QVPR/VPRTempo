@@ -163,7 +163,7 @@ class CustomImageDataset(Dataset):
         self.target_transform = target_transform
         self.skip = skip
         self.img_range = img_range
-
+        
         # Load image labels from each directory, apply the skip and max_samples, and concatenate
         self.img_labels = []
         for img_dir in img_dirs:

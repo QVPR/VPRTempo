@@ -33,12 +33,12 @@ import vprtempo.src.blitnet as bn
 
 from tqdm import tqdm
 from prettytable import PrettyTable
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from vprtempo.src.metrics import recallAtK
 from vprtempo.src.dataset import CustomImageDataset, ProcessImage
 
 class VPRTempo(nn.Module):
-    def __init__(self, dims, args=None, logger=None):
+    def __init__(self, args, dims, logger, num_modules, out_dim, out_dim_remainder=None):
         super(VPRTempo, self).__init__()
 
         # Set the arguments
@@ -53,17 +53,22 @@ class VPRTempo(nn.Module):
             self.device = "cpu"
 
         self.logger = logger
+        self.num_modules = num_modules
+
         # Set the dataset file
         self.dataset_file = os.path.join('./vprtempo/dataset', self.dataset + '.csv')  
-
+        self.query_dir = [dir.strip() for dir in self.query_dir.split(',')]
         # Layer dict to keep track of layer names and their order
         self.layer_dict = {}
         self.layer_counter = 0
-
+        self.database_dirs = [dir.strip() for dir in self.database_dirs.split(',')]
         # Define layer architecture
         self.input = int(self.dims[0]*self.dims[1])
         self.feature = int(self.input * 2)
-        self.output = int(args.num_places / args.num_modules)
+        if not out_dim_remainder is None:
+            self.output = out_dim_remainder
+        else:
+            self.output = out_dim
 
         """
         Define trainable layers here
@@ -125,60 +130,56 @@ class VPRTempo(nn.Module):
         # Initiliaze the output spikes variable
         out = []
         labels = []
+        num_corr = 0
         # Run inference for the specified number of timesteps
         for spikes, label in test_loader:
             # Set device
-            spikes = spikes.to(self.device)
+            spikes, label = spikes.to(self.device), label.to(self.device)
             labels.append(label.detach().cpu().item())
             # Forward pass
             spikes = self.forward(spikes)
             # Add output spikes to list
-            out.append(spikes.detach().cpu().tolist())
+            #out.append(spikes.detach().cpu().tolist())
             pbar.update(1)
-
+            if torch.argmax(spikes) == label:
+                num_corr += 1
+        print(f"Accuracy: {num_corr/len(test_loader)}")
         # Close the tqdm progress bar
         pbar.close()
         
         # Rehsape output spikes into a similarity matrix
-        out = np.reshape(np.array(out),(model.query_places,model.num_places))
+        #out = np.reshape(np.array(out),(model.query_places,model.database_places))
 
         # Recall@N
-        N = [1,5,10,15,20,25] # N values to calculate
-        R = [] # Recall@N values
+       # N = [1,5,10,15,20,25] # N values to calculate
+       # R = [] # Recall@N values
         # Create GT matrix
-        GT = np.zeros((model.query_places,model.num_places), dtype=int)
-        for n, ndx in enumerate(labels):
-            GT[n,ndx] = 1
+       # GT = np.zeros((model.query_places,model.database_places), dtype=int)
+       # for n, ndx in enumerate(labels):
+       #     if model.filter !=1:
+       #         ndx = ndx//model.filter
+       #     GT[n,ndx] = 1
+        # Create GT soft matrix
+       # if model.GT_tolerance > 0:
+       #     GTsoft = np.zeros((model.query_places, model.database_places), dtype=int)
+       #     for n, ndx in enumerate(labels):
+       #         if model.filter != 1:
+       #             ndx = ndx // model.filter
+       #         GTsoft[n, ndx] = 1
+       #         # Apply tolerance
+       #         for i in range(max(0, n - model.GT_tolerance), min(model.query_places, n + model.GT_tolerance + 1)):
+       #             GTsoft[i, ndx] = 1
+       # else:
+       #     GTsoft = None
+
         # Calculate Recall@N
-        for n in N:
-            R.append(round(recallAtK(out,GThard=GT,K=n),2))
+        #for n in N:
+        #    R.append(round(recallAtK(out,GThard=GT,GTsoft=GTsoft,K=n),2))
         # Print the results
-        table = PrettyTable()
-        table.field_names = ["N", "1", "5", "10", "15", "20", "25"]
-        table.add_row(["Recall", R[0], R[1], R[2], R[3], R[4], R[5]])
-        print(table)
-
-        import matplotlib.pyplot as plt
-
-        # Increasing the figure size significantly
-        plt.figure(figsize=(20, 30))  # This is a large figure size, which can be adjusted as needed
-
-        # Plotting "Spiking output"
-        plt.subplot(2, 1, 1)  # First plot
-        plt.imshow(out, aspect='auto', interpolation='nearest')  # 'nearest' interpolation for clear points
-        plt.title("Spiking output")
-        plt.colorbar(shrink=0.5)
-        plt.grid(False)  # Disabling grid lines
-
-        # Plotting "Ground truth"
-        plt.subplot(2, 1, 2)  # Second plot
-        plt.imshow(GT, aspect='auto', interpolation='nearest')
-        plt.title("Ground truth")
-        plt.colorbar(shrink=0.5)
-        plt.grid(False)  # Disabling grid lines
-
-        # Displaying the plots
-        plt.show()
+        #table = PrettyTable()
+        #table.field_names = ["N", "1", "5", "10", "15", "20", "25"]
+        #table.add_row(["Recall", R[0], R[1], R[2], R[3], R[4], R[5]])
+        #self.logger.info(table)
 
     def forward(self, spikes):
         """
@@ -190,10 +191,11 @@ class VPRTempo(nn.Module):
         Returns:
         - Tensor: Output after processing.
         """
-
+        # Initialize the output spikes tensor
         in_spikes = spikes.detach().clone()
         outputs = []  # List to collect output tensors
 
+        # Run inferencing across modules
         for inference in self.inferences:
             out_spikes = inference(in_spikes)
             outputs.append(out_spikes)  # Append the output tensor to the list
@@ -223,7 +225,7 @@ def run_inference(models, model_name):
     """
     # Initialize the image transforms and datasets
     image_transform = ProcessImage(models[0].dims, models[0].patches)
-    max_samples=models[0].query_places
+    max_samples=models[0].database_places
 
     test_dataset = CustomImageDataset(annotations_file=models[0].dataset_file, 
                                       base_dir=models[0].data_dir,
@@ -231,10 +233,13 @@ def run_inference(models, model_name):
                                       transform=image_transform,
                                       skip=models[0].filter,
                                       max_samples=max_samples)
+    indices = torch.randperm(models[0].database_places).tolist()
+    subset_indicies = indices[:models[0].query_places]
+    subset = Subset(test_dataset, subset_indicies) 
     # Initialize the data loader
-    test_loader = DataLoader(test_dataset, 
+    test_loader = DataLoader(subset, 
                              batch_size=1, 
-                             shuffle=True,
+                             shuffle=models[0].shuffle,
                              num_workers=8,
                              persistent_workers=True)
 
