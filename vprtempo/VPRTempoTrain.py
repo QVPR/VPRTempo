@@ -27,6 +27,7 @@ Imports
 import os
 import gc
 import torch
+import sys
 
 import numpy as np
 import torch.nn as nn
@@ -39,7 +40,7 @@ from vprtempo.src.loggers import model_logger
 from vprtempo.src.dataset import CustomImageDataset, ProcessImage
 
 class VPRTempoTrain(nn.Module):
-    def __init__(self, args, dims, logger):
+    def __init__(self, args, dims, logger, num_modules, out_dim, out_dim_remainder=None):
         super(VPRTempoTrain, self).__init__()
 
         # Set the arguments
@@ -52,6 +53,7 @@ class VPRTempoTrain(nn.Module):
         else:
             self.device = "cpu"
         self.logger = logger
+        self.num_modules = num_modules
 
         # Set the dataset file
         self.dataset_file = os.path.join('./vprtempo/dataset', self.dataset + '.csv')
@@ -63,11 +65,18 @@ class VPRTempoTrain(nn.Module):
         # Define layer architecture
         self.input = int(dims[0]*dims[1])
         self.feature = int(self.input * 2)
-        self.output = int(args.num_places / args.num_modules)
+        if not out_dim_remainder is None:
+            self.output = out_dim_remainder
+        else:
+            self.output = out_dim
 
         # Set the total timestep count
-        self.location_repeat = len(args.database_dirs) # Number of times to repeat the locations
-        self.T = int((self.num_places/self.num_modules) * self.location_repeat * self.epoch)
+        self.database_dirs = [dir.strip() for dir in self.database_dirs.split(',')]
+        self.location_repeat = len(self.database_dirs) # Number of times to repeat the locations
+        if not out_dim_remainder is None:
+            self.T = int(out_dim_remainder * self.location_repeat * self.epoch)
+        else:
+            self.T = int(self.max_module * self.location_repeat * self.epoch)
 
         """
         Define trainable layers here
@@ -138,7 +147,7 @@ class VPRTempoTrain(nn.Module):
         """
 
         # Initialize the tqdm progress bar
-        pbar = tqdm(total=int(self.T),
+        pbar = tqdm(total=self.T,
                     desc=f"Module {model_num+1}",
                     position=0)
         
@@ -219,18 +228,21 @@ def generate_model_name(model):
             str(model.input) +
             str(model.feature) +
             str(model.output) +
-            str(model.num_modules) +
+            ''.join(model.database_dirs) +
             '.pth')
 
 def check_pretrained_model(model_name):
     """
     Check if a pre-trained model exists and prompt the user to retrain if desired.
     """
-    if os.path.exists(os.path.join('./models', model_name)):
+    if os.path.exists(os.path.join('./vprtempo/models', model_name)):
         prompt = "A network with these parameters exists, re-train network? (y/n):\n"
         retrain = input(prompt).strip().lower()
-        return retrain == 'n'
-    return False
+        if retrain == 'y':
+            return True
+        elif retrain == 'n':
+            print('Training new model cancelled')
+            sys.exit()
 
 def train_new_model(models, model_name):
     """
@@ -247,15 +259,12 @@ def train_new_model(models, model_name):
     # Automatically generate user_input_ranges
     user_input_ranges = []
     start_idx = 0
-
+    # Generate the image ranges for each module
     for _ in range(models[0].num_modules):
         range_temp = [start_idx, start_idx+((models[0].max_module-1)*models[0].filter)]
         user_input_ranges.append(range_temp)
         start_idx = range_temp[1] + models[0].filter
-    if models[0].num_places < models[0].max_module:
-        max_samples=models[0].num_places
-    else:
-        max_samples = models[0].max_module
+
     # Keep track of trained layers to pass data through them
     trained_layers = [] 
     # Training each layer
@@ -266,6 +275,14 @@ def train_new_model(models, model_name):
             model.train()
             model.to(torch.device(model.device))
             layer = (getattr(model, layer_name))
+            # Determine the maximum samples for the DataLoader
+            if model.database_places < model.max_module:
+                max_samples = model.database_places
+            elif model.output < model.max_module:
+                max_samples = model.output
+            else:
+                max_samples = model.max_module
+            # Initialize new dataset with unique range for each module
             img_range=user_input_ranges[i]
             train_dataset = CustomImageDataset(annotations_file=models[0].dataset_file, 
                                     base_dir=models[0].data_dir,
