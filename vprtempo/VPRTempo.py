@@ -26,6 +26,7 @@ Imports
 
 import os
 import torch
+import random
 
 import numpy as np
 import torch.nn as nn
@@ -130,7 +131,6 @@ class VPRTempo(nn.Module):
         # Initiliaze the output spikes variable
         out = []
         labels = []
-        num_corr = 0
         # Run inference for the specified number of timesteps
         for spikes, label in test_loader:
             # Set device
@@ -139,47 +139,46 @@ class VPRTempo(nn.Module):
             # Forward pass
             spikes = self.forward(spikes)
             # Add output spikes to list
-            #out.append(spikes.detach().cpu().tolist())
+            out.append(spikes.detach().cpu().tolist())
             pbar.update(1)
-            if torch.argmax(spikes) == label:
-                num_corr += 1
-        print(f"Accuracy: {num_corr/len(test_loader)}")
+
         # Close the tqdm progress bar
         pbar.close()
         
         # Rehsape output spikes into a similarity matrix
-        #out = np.reshape(np.array(out),(model.query_places,model.database_places))
+        out = np.reshape(np.array(out),(model.query_places,model.database_places))
 
         # Recall@N
-       # N = [1,5,10,15,20,25] # N values to calculate
-       # R = [] # Recall@N values
+        N = [1,5,10,15,20,25] # N values to calculate
+        R = [] # Recall@N values
         # Create GT matrix
-       # GT = np.zeros((model.query_places,model.database_places), dtype=int)
-       # for n, ndx in enumerate(labels):
-       #     if model.filter !=1:
-       #         ndx = ndx//model.filter
-       #     GT[n,ndx] = 1
+        GT = np.zeros((model.query_places,model.database_places), dtype=int)
+        for n, ndx in enumerate(labels):
+            if model.filter !=1:
+                ndx = ndx//model.filter
+            GT[n,ndx] = 1
+
         # Create GT soft matrix
-       # if model.GT_tolerance > 0:
-       #     GTsoft = np.zeros((model.query_places, model.database_places), dtype=int)
-       #     for n, ndx in enumerate(labels):
-       #         if model.filter != 1:
-       #             ndx = ndx // model.filter
-       #         GTsoft[n, ndx] = 1
-       #         # Apply tolerance
-       #         for i in range(max(0, n - model.GT_tolerance), min(model.query_places, n + model.GT_tolerance + 1)):
-       #             GTsoft[i, ndx] = 1
-       # else:
-       #     GTsoft = None
+        if model.GT_tolerance > 0:
+            GTsoft = np.zeros((model.query_places,model.database_places), dtype=int)
+            for n, ndx in enumerate(labels):
+                if model.filter !=1:
+                    ndx = ndx//model.filter
+                GTsoft[n, ndx] = 1
+                # Apply tolerance
+                for i in range(max(0, n - model.GT_tolerance), min(model.query_places, n + model.GT_tolerance + 1)):
+                    GTsoft[i, ndx] = 1
+        else:
+            GTsoft = None
 
         # Calculate Recall@N
-        #for n in N:
-        #    R.append(round(recallAtK(out,GThard=GT,GTsoft=GTsoft,K=n),2))
+        for n in N:
+            R.append(round(recallAtK(out,GThard=GT,GTsoft=GTsoft,K=n),2))
         # Print the results
-        #table = PrettyTable()
-        #table.field_names = ["N", "1", "5", "10", "15", "20", "25"]
-        #table.add_row(["Recall", R[0], R[1], R[2], R[3], R[4], R[5]])
-        #self.logger.info(table)
+        table = PrettyTable()
+        table.field_names = ["N", "1", "5", "10", "15", "20", "25"]
+        table.add_row(["Recall", R[0], R[1], R[2], R[3], R[4], R[5]])
+        self.logger.info(table)
 
     def forward(self, spikes):
         """
@@ -225,19 +224,29 @@ def run_inference(models, model_name):
     """
     # Initialize the image transforms and datasets
     image_transform = ProcessImage(models[0].dims, models[0].patches)
-    max_samples=models[0].database_places
 
+    # Determine input range
+    if models[0].query_places == models[0].database_places:
+        max_samples=models[0].query_places
+        subset = False
+    elif models[0].query_places < models[0].database_places:  
+        max_samples=models[0].database_places
+        subset = True
+    else:
+        raise ValueError("The number of query places must be less than or equal to the number of database places.")
+    # Initialize the test dataset
     test_dataset = CustomImageDataset(annotations_file=models[0].dataset_file, 
                                       base_dir=models[0].data_dir,
                                       img_dirs=models[0].query_dir,
                                       transform=image_transform,
                                       skip=models[0].filter,
                                       max_samples=max_samples)
-    indices = torch.randperm(models[0].database_places).tolist()
-    subset_indicies = indices[:models[0].query_places]
-    subset = Subset(test_dataset, subset_indicies) 
+    # If the number of query places is less than the number of database places, then subset the database
+    if subset:
+        test_dataset = Subset(test_dataset, random.sample(range(len(test_dataset)), models[0].query_places))
+
     # Initialize the data loader
-    test_loader = DataLoader(subset, 
+    test_loader = DataLoader(test_dataset, 
                              batch_size=1, 
                              shuffle=models[0].shuffle,
                              num_workers=8,
@@ -245,7 +254,6 @@ def run_inference(models, model_name):
 
     # Load the model
     models[0].load_model(models, os.path.join('./vprtempo/models', model_name))
-
     # Retrieve layer names for inference
     layer_names = list(models[0].layer_dict.keys())
 
