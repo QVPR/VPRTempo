@@ -220,16 +220,6 @@ class VPRTempoTrain(nn.Module):
 
         torch.save(state_dicts, model_out)
             
-def generate_model_name(model):
-    """
-    Generate the model name based on its parameters.
-    """
-    return ("VPRTempo" +
-            str(model.input) +
-            str(model.feature) +
-            str(model.output) +
-            ''.join(model.database_dirs) +
-            '.pth')
 
 def check_pretrained_model(model_name):
     """
