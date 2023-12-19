@@ -30,12 +30,13 @@ import random
 
 import numpy as np
 import torch.nn as nn
+import matplotlib.pyplot as plt
 import vprtempo.src.blitnet as bn
 
 from tqdm import tqdm
 from prettytable import PrettyTable
 from torch.utils.data import DataLoader, Subset
-from vprtempo.src.metrics import recallAtK
+from vprtempo.src.metrics import recallAtK, createPR
 from vprtempo.src.dataset import CustomImageDataset, ProcessImage
 
 class VPRTempo(nn.Module):
@@ -131,6 +132,7 @@ class VPRTempo(nn.Module):
         # Initiliaze the output spikes variable
         out = []
         labels = []
+
         # Run inference for the specified number of timesteps
         for spikes, label in test_loader:
             # Set device
@@ -144,26 +146,22 @@ class VPRTempo(nn.Module):
 
         # Close the tqdm progress bar
         pbar.close()
-        
         # Rehsape output spikes into a similarity matrix
         out = np.reshape(np.array(out),(model.query_places,model.database_places))
 
-        # Recall@N
-        N = [1,5,10,15,20,25] # N values to calculate
-        R = [] # Recall@N values
         # Create GT matrix
         GT = np.zeros((model.query_places,model.database_places), dtype=int)
         for n, ndx in enumerate(labels):
-            if model.filter !=1:
-                ndx = ndx//model.filter
+            #if model.filter !=1:
+            #    ndx = ndx//model.filter
             GT[n,ndx] = 1
 
         # Create GT soft matrix
         if model.GT_tolerance > 0:
             GTsoft = np.zeros((model.query_places,model.database_places), dtype=int)
             for n, ndx in enumerate(labels):
-                if model.filter !=1:
-                    ndx = ndx//model.filter
+                #if model.filter !=1:
+                #    ndx = ndx//model.filter
                 GTsoft[n, ndx] = 1
                 # Apply tolerance
                 for i in range(max(0, n - model.GT_tolerance), min(model.query_places, n + model.GT_tolerance + 1)):
@@ -171,6 +169,17 @@ class VPRTempo(nn.Module):
         else:
             GTsoft = None
 
+        # Create PR curve
+        P, R = createPR(out, GThard=GT, GTsoft=GTsoft, matching='single', n_thresh=100)
+        # Plot PR curve
+        plt.plot(R,P)    
+        plt.xlabel('Recall')
+        plt.ylabel('Precision')
+        plt.title('Precision-Recall Curve')
+        plt.show()
+        # Recall@N
+        N = [1,5,10,15,20,25] # N values to calculate
+        R = [] # Recall@N values
         # Calculate Recall@N
         for n in N:
             R.append(round(recallAtK(out,GThard=GT,GTsoft=GTsoft,K=n),2))
@@ -239,11 +248,18 @@ def run_inference(models, model_name):
                                       base_dir=models[0].data_dir,
                                       img_dirs=models[0].query_dir,
                                       transform=image_transform,
-                                      skip=models[0].filter,
                                       max_samples=max_samples)
     # If the number of query places is less than the number of database places, then subset the database
     if subset:
-        test_dataset = Subset(test_dataset, random.sample(range(len(test_dataset)), models[0].query_places))
+        if models[0].shuffle:
+             test_dataset = Subset(test_dataset, random.sample(range(len(test_dataset)), models[0].query_places))
+        else:
+            # Generate indices with applied skip
+            indices = [i for i in range(models[0].database_places) if i % models[0].filter == 0]
+            # Limit to the desired number of queries
+            indices = indices[:models[0].query_places]
+            test_dataset = Subset(test_dataset, indices)
+
 
     # Initialize the data loader
     test_loader = DataLoader(test_dataset, 

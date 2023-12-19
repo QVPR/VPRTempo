@@ -33,19 +33,19 @@ from tqdm import tqdm
 from vprtempo.VPRTempo import VPRTempo, run_inference
 from vprtempo.src.loggers import model_logger, model_logger_quant
 from vprtempo.VPRTempoQuant import VPRTempoQuant, run_inference_quant
-from vprtempo.VPRTempoQuantTrain import VPRTempoQuantTrain, generate_model_name_quant, train_new_model_quant
 from vprtempo.VPRTempoTrain import VPRTempoTrain, check_pretrained_model, train_new_model
+from vprtempo.VPRTempoQuantTrain import VPRTempoQuantTrain, generate_model_name_quant, train_new_model_quant
 
 def generate_model_name(model):
     """
     Generate the model name based on its parameters.
     """
-    return ("VPRTempo" +
-            str(model.input) +
-            str(model.feature) +
-            str(model.database_places) +
-            ''.join(model.database_dirs) +
-            '.pth')
+    return (''.join(model.database_dirs)+"_"+
+            "VPRTempo_" +
+            "IN"+str(model.input)+"_" +
+            "FN"+str(model.feature)+"_" + 
+            "DB"+str(model.database_places) +
+            ".pth")
 
 def initialize_and_run_model(args,dims):
     # If user wants to train a new network
