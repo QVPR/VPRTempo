@@ -23,31 +23,78 @@
 '''
 Imports
 '''
+import os
 import sys
-import argparse
 import torch
+import argparse
 
 import torch.quantization as quantization
 
 from tqdm import tqdm
 from vprtempo.VPRTempo import VPRTempo, run_inference
+from vprtempo.VPRTempoTrain import VPRTempoTrain, train_new_model
 from vprtempo.src.loggers import model_logger, model_logger_quant
 from vprtempo.VPRTempoQuant import VPRTempoQuant, run_inference_quant
-from vprtempo.VPRTempoTrain import VPRTempoTrain, check_pretrained_model, train_new_model
-from vprtempo.VPRTempoQuantTrain import VPRTempoQuantTrain, generate_model_name_quant, train_new_model_quant
+from vprtempo.VPRTempoQuantTrain import VPRTempoQuantTrain, train_new_model_quant
 
-def generate_model_name(model):
+def generate_model_name(model,quant=False):
     """
     Generate the model name based on its parameters.
     """
-    return (''.join(model.database_dirs)+"_"+
-            "VPRTempo_" +
-            "IN"+str(model.input)+"_" +
-            "FN"+str(model.feature)+"_" + 
-            "DB"+str(model.database_places) +
-            ".pth")
+    if quant:
+        model_name = (''.join(model.database_dirs)+"_"+
+                "VPRTempoQuant_" +
+                "IN"+str(model.input)+"_" +
+                "FN"+str(model.feature)+"_" + 
+                "DB"+str(model.database_places) +
+                ".pth")
+    else:
+        model_name = (''.join(model.database_dirs)+"_"+
+                "VPRTempo_" +
+                "IN"+str(model.input)+"_" +
+                "FN"+str(model.feature)+"_" + 
+                "DB"+str(model.database_places) +
+                ".pth")
+    return model_name
+
+def check_pretrained_model(model_name):
+    """
+    Check if a pre-trained model exists and prompt the user to retrain if desired.
+    """
+    if os.path.exists(os.path.join('./vprtempo/models', model_name)):
+        prompt = "A network with these parameters exists, re-train network? (y/n):\n"
+        retrain = input(prompt).strip().lower()
+        if retrain == 'y':
+            return True
+        elif retrain == 'n':
+            print('Training new model cancelled')
+            sys.exit()
 
 def initialize_and_run_model(args,dims):
+    """
+    Run the VPRTempo/VPRTempoQuant training or inference models.
+    
+    :param args: Arguments set for the network
+    :param dims: Dimensions of the network
+    """
+    # Determine number of modules to generate based on user input
+    places = args.database_places # Copy out number of database places
+
+    # Caclulate number of modules
+    num_modules = 1
+    while places > args.max_module:
+        places -= args.max_module
+        num_modules += 1
+
+    # If the final module has less than max_module, reduce the dim of the output layer
+    remainder = args.database_places % args.max_module
+    if remainder != 0: # There are remainders, adjust output neuron count in final module
+        out_dim = int((args.database_places - remainder) / (num_modules - 1))
+        final_out_dim = remainder
+    else: # No remainders, all modules are even
+        out_dim = int(args.database_places / num_modules)
+        final_out_dim = out_dim
+
     # If user wants to train a new network
     if args.train_new_model:
         # If using quantization aware training
@@ -63,7 +110,7 @@ def initialize_and_run_model(args,dims):
                 model.qconfig = qconfig
                 models.append(model)
             # Generate the model name
-            model_name = generate_model_name_quant(model)
+            model_name = generate_model_name(model,args.quantize)
             # Check if the model has been trained before
             check_pretrained_model(model_name)
             # Train the model
@@ -73,29 +120,6 @@ def initialize_and_run_model(args,dims):
         else:
             models = []
             logger = model_logger() # Initialize the logger
-            places = args.database_places # Copy out number of database places
-
-            # Determine how many modules the network needs to create
-            num_modules = 1
-            while places > args.max_module:
-                places -= args.max_module
-                num_modules += 1
-
-            # If the final module has less than max_module, reduce the dim of the output layer
-            remainder = args.database_places % args.max_module
-
-            # Check if number of modules and database images works
-            if args.filter * (((num_modules-1)*args.max_module)+remainder) > args.database_places:
-                print("Error: Too many modules or too few images for the given filter")
-                sys.exit()
-
-            # Modify final module output layer neuron count according to remainder    
-            if remainder != 0: # There are remainders, adjust output neuron count in final module
-                out_dim = int((args.database_places - remainder) / (num_modules - 1))
-                final_out_dim = remainder
-            else: # No remainders, all modules are even
-                out_dim = int(args.database_places / num_modules)
-                final_out_dim = out_dim
 
             # Create the modules    
             final_out = None
@@ -135,28 +159,21 @@ def initialize_and_run_model(args,dims):
             run_inference_quant(models, model_name, qconfig)
         else:
             models = []
-            logger = model_logger() # Initialize the logger
+            logger, output_folder = model_logger() # Initialize the logger
             places = args.database_places # Copy out number of database places
-
-            # Determine how many modules the network needs to create
-            num_modules = 1
-            while places > args.max_module:
-                places -= args.max_module
-                num_modules += 1
-
-            # If the final module has less than max_module, reduce the dim of the output layer
-            remainder = args.database_places % args.max_module
-            if remainder != 0: # There are remainders, adjust output neuron count in final module
-                out_dim = int((args.database_places - remainder) / (num_modules - 1))
-                final_out_dim = remainder
-            else: # No remainders, all modules are even
-                out_dim = int(args.database_places / num_modules)
-                final_out_dim = out_dim
 
             # Create the modules    
             final_out = None
             for mod in tqdm(range(num_modules), desc="Initializing modules"):
-                model = VPRTempo(args, dims, logger, num_modules, out_dim, out_dim_remainder=final_out) # Initialize the model
+                model = VPRTempo(
+                    args,
+                    dims,
+                    logger,
+                    num_modules,
+                    output_folder,
+                    out_dim,
+                    out_dim_remainder=final_out
+                    ) 
                 model.eval()
                 model.to(torch.device('cpu')) # Move module to CPU for storage (necessary for large models)
                 models.append(model) # Create module list
@@ -211,6 +228,12 @@ def parse_network(use_quantize=False, train_new_model=False):
                             help="Flag to run the training or inferencing model")
     parser.add_argument('--quantize', action='store_true',
                             help="Enable/disable quantization for the model")
+    
+    # Define metrics functionality
+    parser.add_argument('--PR_curve', action='store_true',
+                            help="Flag to generate a Precision-Recall curve")
+    parser.add_argument('--sim_mat', action='store_true',
+                            help="Flag to plot the similarity matrix, GT, and GTsoft")
     
     # If the function is called with specific arguments, override sys.argv
     if use_quantize or train_new_model:

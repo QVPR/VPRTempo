@@ -48,7 +48,7 @@ def model_logger():
         logger.info('Current device is: CPU')
     logger.info('')
 
-    return logger
+    return logger, output_folder
 
 def model_logger_quant(): 
     """
@@ -91,4 +91,4 @@ def model_logger_quant():
     logger.info('Current device is: CPU')
     logger.info('')
 
-    return logger
+    return logger, output_folder
