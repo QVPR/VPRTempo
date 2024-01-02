@@ -25,49 +25,64 @@ Imports
 '''
 
 import os
+import json
 import torch
+import random
 
 import numpy as np
 import torch.nn as nn
+import matplotlib.pyplot as plt
 import vprtempo.src.blitnet as bn
 
 from tqdm import tqdm
 from prettytable import PrettyTable
-from torch.utils.data import DataLoader
-from vprtempo.src.metrics import recallAtK
+from torch.utils.data import DataLoader, Subset
+from vprtempo.src.metrics import recallAtK, createPR
 from torch.ao.quantization import QuantStub, DeQuantStub
 from vprtempo.src.dataset import CustomImageDataset, ProcessImage
 
 #from main import parse_network
 
 class VPRTempoQuant(nn.Module):
-    def __init__(self, dims, args=None, logger=None):
+    def __init__(self, args, dims, logger, num_modules, output_folder, out_dim, out_dim_remainder=None):
         super(VPRTempoQuant, self).__init__()
 
-        # Set the arguments
-        self.args = args
-        for arg in vars(args):
-            setattr(self, arg, getattr(args, arg))
+        # Set the args
+        if args is not None:
+            self.args = args
+            for arg in vars(args):
+                setattr(self, arg, getattr(args, arg))
         setattr(self, 'dims', dims)
-        # Set the dataset file
-        self.dataset_file = os.path.join('./vprtempo/dataset', self.dataset + '.csv')
 
-        # Set the model logger and return the device
-        self.logger = logger
+        # Set the device
         self.device = "cpu"
 
-        # Add quantization stubs for Quantization Aware Training (QAT)
+        # Set input args
+        self.logger = logger
+        self.num_modules = num_modules
+        self.output_folder = output_folder
+
         self.quant = QuantStub()
-        self.dequant = DeQuantStub() 
+        self.dequant = DeQuantStub()
+
+        # Set the dataset file
+        self.dataset_file = os.path.join('./vprtempo/dataset', self.dataset + '.csv')  
+        self.query_dir = [dir.strip() for dir in self.query_dir.split(',')]
 
         # Layer dict to keep track of layer names and their order
         self.layer_dict = {}
         self.layer_counter = 0
+        self.database_dirs = [dir.strip() for dir in self.database_dirs.split(',')]
 
         # Define layer architecture
-        self.input = int(dims[0]*dims[1])
+        self.input = int(self.dims[0]*self.dims[1])
         self.feature = int(self.input * 2)
-        self.output = int(args.num_places / args.num_modules)
+
+        # Output dimension changes for final module if not an even distribution of places
+        if not out_dim_remainder is None:
+            self.output = out_dim_remainder
+        else:
+            self.output = out_dim
 
         """
         Define trainable layers here
@@ -125,15 +140,17 @@ class VPRTempoQuant(nn.Module):
                 nn.ReLU()
             ))
         # Initialize the tqdm progress bar
-        pbar = tqdm(total=self.num_places,
+        pbar = tqdm(total=self.query_places,
                     desc="Running the test network",
                     position=0)
         # Initiliaze the output spikes variable
         out = []
+        labels = []
         # Run inference for the specified number of timesteps
-        for spikes, labels in test_loader:
+        for spikes, label in test_loader:
             # Set device
-            spikes, labels = spikes.to(self.device), labels.to(self.device)
+            spikes = spikes.to(self.device)
+            labels.append(label.detach().item())
             # Pass through previous layers if they exist
             spikes = self.forward(spikes)
             # Add output spikes to list
@@ -144,21 +161,82 @@ class VPRTempoQuant(nn.Module):
         pbar.close()
 
         # Rehsape output spikes into a similarity matrix
-        out = np.reshape(np.array(out),(self.num_places,self.num_places))
-        # Calculate and print the Recall@N
-        N = [1,5,10,15,20,25]
-        R = []
+        out = np.reshape(np.array(out),(model.query_places,model.database_places))
+
         # Create GT matrix
-        GT = np.zeros((self.num_places,self.num_places), dtype=int)
-        for n in range(len(GT)):
-            GT[n,n] = 1
+        GT = np.zeros((model.query_places,model.database_places), dtype=int)
+        for n, ndx in enumerate(labels):
+            if model.filter !=1:
+                ndx = ndx//model.filter
+            GT[n,ndx] = 1
+
+        # Create GT soft matrix
+        if model.GT_tolerance > 0:
+            GTsoft = np.zeros((model.query_places,model.database_places), dtype=int)
+            for n, ndx in enumerate(labels):
+                if model.filter !=1:
+                    ndx = ndx//model.filter
+                GTsoft[n, ndx] = 1
+                # Apply tolerance
+                for i in range(max(0, n - model.GT_tolerance), min(model.query_places, n + model.GT_tolerance + 1)):
+                    GTsoft[i, ndx] = 1
+        else:
+            GTsoft = None
+        
+        # If user specified, generate a PR curve
+        if model.PR_curve:
+            # Create PR curve
+            P, R = createPR(out, GThard=GT, GTsoft=GTsoft, matching='single', n_thresh=100)
+            # Combine P and R into a list of lists
+            PR_data = {
+                    "Precision": P,
+                    "Recall": R
+                }
+            output_file = "PR_curve_data.json"
+            # Construct the full path
+            full_path = f"{model.output_folder}/{output_file}"
+            # Write the data to a JSON file
+            with open(full_path, 'w') as file:
+                json.dump(PR_data, file) 
+            # Plot PR curve
+            plt.plot(R,P)    
+            plt.xlabel('Recall')
+            plt.ylabel('Precision')
+            plt.title('Precision-Recall Curve')
+            plt.show()
+
+        if model.sim_mat:
+            # Create a figure and a set of subplots
+            fig, axs = plt.subplots(1, 3, figsize=(15, 5))
+
+            # Plot each matrix using matshow
+            cax1 = axs[0].matshow(out, cmap='viridis')
+            fig.colorbar(cax1, ax=axs[0], shrink=0.8)
+            axs[0].set_title('Similarity matrix')
+
+            cax2 = axs[1].matshow(GT, cmap='plasma')
+            fig.colorbar(cax2, ax=axs[1], shrink=0.8)
+            axs[1].set_title('GT')
+
+            cax3 = axs[2].matshow(GTsoft, cmap='inferno')
+            fig.colorbar(cax3, ax=axs[2], shrink=0.8)
+            axs[2].set_title('GT-soft')
+
+            # Adjust layout
+            plt.tight_layout()
+            plt.show()
+
+        # Recall@N
+        N = [1,5,10,15,20,25] # N values to calculate
+        R = [] # Recall@N values
+        # Calculate Recall@N
         for n in N:
-            R.append(recallAtK(out,GThard=GT,K=n))
+            R.append(round(recallAtK(out,GThard=GT,GTsoft=GTsoft,K=n),2))
         # Print the results
         table = PrettyTable()
         table.field_names = ["N", "1", "5", "10", "15", "20", "25"]
         table.add_row(["Recall", R[0], R[1], R[2], R[3], R[4], R[5]])
-        print(table)
+        self.logger.info(table)
 
     def forward(self, spikes):
         """
@@ -194,45 +272,57 @@ class VPRTempoQuant(nn.Module):
 
             model.load_state_dict(combined_state_dict[f'model_{i}'])
             model.eval()  # Set the model to inference mode
-            
-def check_pretrained_model(model_name):
-    """
-    Check if a pre-trained model exists and tell user if it does not.
-    """
-    if not os.path.exists(os.path.join('./models', model_name)):
-        model.logger.info("A pre-trained network does not exist: please train one using VPRTempoQuant_Trainer")
-        pretrain = 'n'
-    else:
-        pretrain = 'y'
-    return pretrain
 
-def run_inference_quant(models, model_name, qconfig):
+def run_inference_quant(models, model_name):
     """
     Run inference on a pre-trained model.
 
-    :param model: Model to run inference on
+    :param models: Models to run inference on, each model is a VPRTempo module
     :param model_name: Name of the model to load
-    :param qconfig: Quantization configuration
     """
-    max_samples = models[0].num_places
-    # Initialize the image transforms and datasets
-    image_transform = ProcessImage(models[0].dims, models[0].patches)
-    test_dataset = CustomImageDataset(annotations_file=models[0].dataset_file, 
-                                      base_dir=models[0].data_dir,
-                                      img_dirs=models[0].query_dir,
+    # Set first index model as the main model for parameters
+    model = models[0]
+    # Initialize the image transforms
+    image_transform = ProcessImage(model.dims, model.patches)
+
+    # Determines if querying a subset of the database or the entire database
+    if model.query_places == model.database_places:
+        subset = False # Entire database
+    elif model.query_places < model.database_places:  
+        subset = True # Subset of the database
+    else:
+        raise ValueError("The number of query places must be less than or equal to the number of database places.")
+    
+    # Initialize the test dataset
+    test_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
+                                      base_dir=model.data_dir,
+                                      img_dirs=model.query_dir,
                                       transform=image_transform,
-                                      skip=models[0].filter,
-                                      max_samples=max_samples)
+                                      max_samples=model.database_places,
+                                      skip=model.filter)
+    
+    # If using a subset of the database
+    if subset:
+        if model.shuffle: # For a randomized selection of database places
+             test_dataset = Subset(test_dataset, random.sample(range(len(test_dataset)), model.query_places))
+        else: # For a sequential selection of database places
+            indices = [i for i in range(model.database_places) if i % model.filter == 0]
+            # Limit to the desired number of queries
+            indices = indices[:model.query_places]
+            # Create the subset
+            test_dataset = Subset(test_dataset, indices)
+
+
     # Initialize the data loader
     test_loader = DataLoader(test_dataset, 
                              batch_size=1, 
-                             shuffle=False,
+                             shuffle=model.shuffle,
                              num_workers=8,
                              persistent_workers=True)
 
     # Load the model
-    models[0].load_model(models, os.path.join('./vprtempo/models', model_name))
+    model.load_model(models, os.path.join('./vprtempo/models', model_name))
 
     # Use evaluate method for inference accuracy
     with torch.no_grad():
-        models[0].evaluate(models, test_loader)
+        model.evaluate(models, test_loader)
