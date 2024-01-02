@@ -48,6 +48,8 @@ def model_logger():
         logger.info('Current device is: CPU')
     logger.info('')
 
+    return logger, output_folder
+
 def model_logger_quant(): 
     """
     Configure the logger
@@ -88,3 +90,5 @@ def model_logger_quant():
     logger.info('Quantization enabled')
     logger.info('Current device is: CPU')
     logger.info('')
+
+    return logger, output_folder

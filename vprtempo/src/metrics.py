@@ -47,20 +47,19 @@ def createPR(S_in, GThard, GTsoft=None, matching='multi', n_thresh=100):
 
     # copy S and set elements that are only true in GTsoft to min(S) to ignore them during evaluation
     S = S_in.copy()
-    S[S == 0] = np.nan
     if GTsoft is not None:
         S[GTsoft & ~GT] = S.min()
 
     # single-best-match or multi-match VPR
     if matching == 'single':
-        # GT-values for best match per query (i.e., per column)
-        GT = GT[np.nanargmax(S, axis=0), np.arange(GT.shape[1])]
+        # count the number of ground-truth positives (GTP)
+        GTP = np.count_nonzero(GT.any(0))
 
-         # count the number of ground-truth positives (GTP)
-        GTP = np.count_nonzero(GT)
+        # GT-values for best match per query (i.e., per column)
+        GT = GT[np.argmax(S, axis=0), np.arange(GT.shape[1])]
 
         # similarities for best match per query (i.e., per column)
-        S = np.nanmax(S, axis=0)
+        S = np.max(S, axis=0)
 
     elif matching == 'multi':
         # count the number of ground-truth positives (GTP)
@@ -71,8 +70,8 @@ def createPR(S_in, GThard, GTsoft=None, matching='multi', n_thresh=100):
     P = [1, ]
 
     # select start and end treshold
-    startV = np.nanmax(S)  # start-value for treshold
-    endV = np.nanmin(S)  # end-value for treshold
+    startV = S.max()  # start-value for treshold
+    endV = S.min()  # end-value for treshold
 
     # iterate over different thresholds
     for i in np.linspace(startV, endV, n_thresh):
@@ -149,9 +148,13 @@ def recallAtK(S_in, GThard, GTsoft=None, K=1):
 
     # ensure logical datatype in GT and GTsoft
     GT = GThard.astype('bool')
+    if GTsoft is not None:
+        GTsoft = GTsoft.astype('bool')
 
     # copy S and set elements that are only true in GTsoft to min(S) to ignore them during evaluation
     S = S_in.copy()
+    if GTsoft is not None:
+        S[GTsoft & ~GT] = S.min()
 
     # discard all query images without an actually matching database image
     j = GT.sum(0) > 0 # columns with matches
