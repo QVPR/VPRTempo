@@ -25,7 +25,7 @@ To use VPRTempo, please follow the instructions below for installation and usage
   - Quantization Aware Training (QAT) enabled to train weights in int8 space
   - Addition of tutorials in Jupyter Notebooks to learn how to use VPRTempo as well as explain the computational logic
   - Simplification of weight operations, reducing to a single weight tensor - allowing positive and negative connections to change sign during training
-  - Easier dependency installation with PyPi/pip
+  - Easier dependency installation with PyPi/pip and conda
   - And more!
 
 ## License & Citation
@@ -64,22 +64,28 @@ If you wish to enable CUDA, please follow the instructions on the [PyTorch - Get
 Dependencies can be installed either through our provided `requirements.txt` files.
 
 ```python
-pip3 install -r requirements.txt
+pip install -r requirements.txt
 ```
 As above, if you wish to install CUDA please visit [PyTorch - Get Started](https://pytorch.org/get-started/locally/).
 ### Option 3: Conda install
 >**:heavy_exclamation_mark: Recommended:**
-> Use [Mambaforge](https://mamba.readthedocs.io/en/latest/installation.html) instead of conda.
+> Use [Mambaforge](https://mamba.readthedocs.io/en/latest/installation/mamba-installation.html) instead of conda.
+
+Requirements for VPRTempo may be installed using our [conda-forge package](https://anaconda.org/conda-forge/vprtempo).
 
 ```console
-# Windows/Linux - CUDA enabled
+# Linux/OS X
+conda create -n vprtempo -c conda-forge vprtempo
+
+# Linux CUDA enabled
+conda create -n vprtempo -c conda-forge -c pytorch -c nvidia vprtempo pytorch-cuda cudatoolkit
+
+# Windows
+conda create -n vprtempo -c pytorch python pytorch torchvision torchaudio cpuonly prettytable tqdm numpy pandas scikit-learn
+
+# Windows CUDA enabled
 conda create -n vprtempo -c pytorch -c nvidia python torchvision torchaudio pytorch-cuda=11.7 cudatoolkit prettytable tqdm numpy pandas scikit-learn
 
-# Windows/Linux - CPU only
-conda create -n vprtempo python pytorch torchvision torchaudio cpuonly prettytable tqdm numpy pandas scikit-learn -c pytorch
-
-# MacOS
-conda create -n vprtempo -c conda-forge python prettytable tqdm numpy pandas scikit-learn -c pytorch pytorch::pytorch torchvision torchaudio
 ```
 
 ## Datasets
@@ -142,8 +148,6 @@ python main.py --quantize
   <img src="./assets/mainquant_example.gif" alt="Example of the quantized VPRTempo networking running"/>
 </p>
 
-#### IDE
-You can also run VPRTempo through your IDE by running `main.py`. Change the `bool` flag for `use_quantize` to `True` if you wish to run VPRTempoQuant.
 
 ### Train new network
 If you do not wish to use the pretrained models or you would like to train your own, we can parse the `--train_new_model` flag to `main.py`. Note, if a pretrained model already exists you will be prompted if you would like to retrain it.

@@ -39,7 +39,7 @@ from torch.ao.quantization import QuantStub, DeQuantStub
 from vprtempo.src.dataset import CustomImageDataset, ProcessImage
 
 class VPRTempoQuantTrain(nn.Module):
-    def __init__(self, args, dims, logger):
+    def __init__(self, args, dims, logger, num_modules, out_dim, out_dim_remainder=None):
         super(VPRTempoQuantTrain, self).__init__()
 
         # Set the arguments
@@ -47,19 +47,15 @@ class VPRTempoQuantTrain(nn.Module):
         for arg in vars(args):
             setattr(self, arg, getattr(args, arg))
         setattr(self, 'dims', dims)
-        
-        # Only CPU available for quantization
-        self.device = "cpu"
 
-        # Set the logger
+        self.device = "cpu"
         self.logger = logger
+        self.num_modules = num_modules
+        self.quant = QuantStub()
+        self.dequant = DeQuantStub()
 
         # Set the dataset file
         self.dataset_file = os.path.join('./vprtempo/dataset', self.dataset + '.csv')
-
-        # Add quantization stubs for Quantization Aware Training (QAT)
-        self.quant = QuantStub()
-        self.dequant = DeQuantStub()   
 
         # Layer dict to keep track of layer names and their order
         self.layer_dict = {}
@@ -68,11 +64,18 @@ class VPRTempoQuantTrain(nn.Module):
         # Define layer architecture
         self.input = int(dims[0]*dims[1])
         self.feature = int(self.input * 2)
-        self.output = int(args.num_places / args.num_modules)
+        if not out_dim_remainder is None:
+            self.output = out_dim_remainder
+        else:
+            self.output = out_dim
 
         # Set the total timestep count
-        self.location_repeat = len(args.database_dirs) # Number of times to repeat the locations
-        self.T = int((self.num_places / self.num_modules) * self.location_repeat * self.epoch)
+        self.database_dirs = [dir.strip() for dir in self.database_dirs.split(',')]
+        self.location_repeat = len(self.database_dirs) # Number of times to repeat the locations
+        if not out_dim_remainder is None:
+            self.T = int(out_dim_remainder * self.location_repeat * self.epoch)
+        else:
+            self.T = int(self.max_module * self.location_repeat * self.epoch)
 
         """
         Define trainable layers here
@@ -148,7 +151,7 @@ class VPRTempoQuantTrain(nn.Module):
         # idx scale factor for different modules
         idx_scale = (self.max_module*self.filter)*model_num
         # Run training for the specified number of epochs
-        for epoch in range(self.epoch):
+        for _ in range(self.epoch):
             # Run training for the specified number of timesteps
             for spikes, labels in train_loader:
                 spikes, labels = spikes.to(self.device), labels.to(self.device)
@@ -226,60 +229,69 @@ def check_pretrained_model(model_name):
         return retrain == 'n'
     return False
 
-def train_new_model_quant(models, model_name, qconfig):
+def train_new_model_quant(models, model_name):
     """
     Train a new model.
 
     :param model: Model to train
     :param model_name: Name of the model to save after training
-    :param qconfig: Quantization configuration
     """
+    # Set first index model as the main model for parameters
+    model = models[0]
     # Initialize the image transforms and datasets
     image_transform = transforms.Compose([
-        ProcessImage(models[0].dims, models[0].patches)
+        ProcessImage(model.dims, model.patches)
     ])
     # Automatically generate user_input_ranges
     user_input_ranges = []
     start_idx = 0
-
-    for _ in range(models[0].num_modules):
-        range_temp = [start_idx, start_idx+((models[0].max_module-1)*models[0].filter)]
+    # Generate the image ranges for each module
+    for _ in range(model.num_modules):
+        range_temp = [start_idx, start_idx+((model.max_module-1)*model.filter)]
         user_input_ranges.append(range_temp)
-        start_idx = range_temp[1] + models[0].filter
-    if models[0].num_places < models[0].max_module:
-        max_samples=models[0].num_places
-    else:
-        max_samples = models[0].max_module
-    # Keep track of trained layers to pass data through them
-    # Training each layer
-    trained_models = []
-    for i, model in enumerate(models):
-        trained_layers = [] 
-        img_range=user_input_ranges[i]
-        train_dataset = CustomImageDataset(annotations_file=models[0].dataset_file, 
-                                base_dir=models[0].data_dir,
-                                img_dirs=models[0].database_dirs,
-                                transform=image_transform,
-                                skip=models[0].filter,
-                                test=False,
-                                img_range=img_range,
-                                max_samples=max_samples)
-        # Initialize the data loader
-        train_loader = DataLoader(train_dataset, 
-                                batch_size=1, 
-                                shuffle=True,
-                                num_workers=8,
-                                persistent_workers=True)
-        model = quantization.prepare_qat(model, inplace=False)
-        for layer_name, _ in sorted(models[0].layer_dict.items(), key=lambda item: item[1]):
-            print(f"Training layer: {layer_name}")
-            layer = (getattr(model, layer_name))
+        start_idx = range_temp[1] + model.filter
 
+    # Keep track of trained layers to pass data through them
+    trained_layers = [] 
+
+    # Training each layer
+    for layer_name, _ in sorted(model.layer_dict.items(), key=lambda item: item[1]):
+        print(f"Training layer: {layer_name}")
+        # Retrieve the layer object
+        for i, model in enumerate(models):
+            model.train()
+            model.to(torch.device(model.device))
+            layer = (getattr(model, layer_name))
+            # Determine the maximum samples for the DataLoader
+            if model.database_places < model.max_module:
+                max_samples = model.database_places
+            elif model.output < model.max_module:
+                max_samples = model.output
+            else:
+                max_samples = model.max_module
+            # Initialize new dataset with unique range for each module
+            img_range=user_input_ranges[i]
+            train_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
+                                    base_dir=model.data_dir,
+                                    img_dirs=model.database_dirs,
+                                    transform=image_transform,
+                                    skip=model.filter,
+                                    test=False,
+                                    img_range=img_range,
+                                    max_samples=max_samples)
+            # Initialize the data loader
+            train_loader = DataLoader(train_dataset, 
+                                    batch_size=1, 
+                                    shuffle=True,
+                                    num_workers=8,
+                                    persistent_workers=True)
             # Train the layers
             model.train_model(train_loader, layer, model, i, prev_layers=trained_layers)
-            trained_layers.append(layer_name) 
-        trained_models.append(quantization.convert(model, inplace=False))
-        # After training the current layer, add it to the list of trained layer
+        trained_layers.append(layer_name) 
+
+    # Convert the model to evaluation mode
+    for model in models:
+        quantization.convert(model, inplace=True)
 
     # Save the model
-    model.save_model(trained_models,os.path.join('./vprtempo/models', model_name))   
+    model.save_model(models,os.path.join('./vprtempo/models', model_name))      
