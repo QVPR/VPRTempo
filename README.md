@@ -25,7 +25,7 @@ To use VPRTempo, please follow the instructions below for installation and usage
   - Quantization Aware Training (QAT) enabled to train weights in int8 space
   - Addition of tutorials in Jupyter Notebooks to learn how to use VPRTempo as well as explain the computational logic
   - Simplification of weight operations, reducing to a single weight tensor - allowing positive and negative connections to change sign during training
-  - Easier dependency installation with PyPi/pip
+  - Easier dependency installation with PyPi/pip and conda
   - And more!
 
 ## License & Citation
