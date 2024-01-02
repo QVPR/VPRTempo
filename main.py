@@ -100,21 +100,26 @@ def initialize_and_run_model(args,dims):
         # If using quantization aware training
         if args.quantize:
             models = []
-            logger = model_logger_quant()
-            # Get the quantization config
+            logger = model_logger_quant() # Initialize the logger
             qconfig = quantization.get_default_qat_qconfig('fbgemm')
-            for _ in tqdm(range(args.num_modules), desc="Initializing modules"):
-                # Initialize the model
-                model = VPRTempoQuantTrain(args, dims, logger)
+            # Create the modules    
+            final_out = None
+            for mod in tqdm(range(num_modules), desc="Initializing modules"):
+                model = VPRTempoQuantTrain(args, dims, logger, num_modules, out_dim, out_dim_remainder=final_out) # Initialize the model
                 model.train()
                 model.qconfig = qconfig
-                models.append(model)
+                quantization.prepare_qat(model, inplace=True)
+                models.append(model) # Create module list
+                if mod == num_modules - 2:
+                    final_out = final_out_dim
             # Generate the model name
             model_name = generate_model_name(model,args.quantize)
             # Check if the model has been trained before
             check_pretrained_model(model_name)
+            # Get the quantization config
+            qconfig = quantization.get_default_qat_qconfig('fbgemm')
             # Train the model
-            train_new_model_quant(models, model_name, qconfig)
+            train_new_model_quant(models, model_name)
 
         # Base model    
         else:
@@ -143,20 +148,29 @@ def initialize_and_run_model(args,dims):
         # Set the quantization configuration
         if args.quantize:
             models = []
-            logger = model_logger_quant()
+            logger, output_folder = model_logger_quant()
             qconfig = quantization.get_default_qat_qconfig('fbgemm')
-            for _ in tqdm(range(args.num_modules), desc="Initializing modules"):
+            final_out = None
+            for _ in tqdm(range(num_modules), desc="Initializing modules"):
                 # Initialize the model
-                model = VPRTempoQuant(dims, args, logger)
+                model = VPRTempoQuant(
+                    args,
+                    dims,
+                    logger,
+                    num_modules,
+                    output_folder,
+                    out_dim,
+                    out_dim_remainder=final_out
+                    ) 
                 model.eval()
                 model.qconfig = qconfig
-                model = quantization.prepare(model, inplace=False)
-                model = quantization.convert(model, inplace=False)
+                quantization.prepare(model, inplace=True)
+                quantization.convert(model, inplace=True)
                 models.append(model)
             # Generate the model name
-            model_name = generate_model_name_quant(model)
+            model_name = generate_model_name(model, args.quantize)
             # Run the quantized inference model
-            run_inference_quant(models, model_name, qconfig)
+            run_inference_quant(models, model_name)
         else:
             models = []
             logger, output_folder = model_logger() # Initialize the logger
@@ -208,7 +222,7 @@ def parse_network(use_quantize=False, train_new_model=False):
                             help="Directories to use for testing")
     parser.add_argument('--shuffle', action='store_true',
                             help="Shuffle input images during query")
-    parser.add_argument('--GT_tolerance', type=int, default=2,
+    parser.add_argument('--GT_tolerance', type=int, default=1,
                             help="Ground truth tolerance for matching")
 
     # Define training parameters
