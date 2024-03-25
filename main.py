@@ -226,7 +226,7 @@ def parse_network(use_quantize=False, train_new_model=False):
                             help="Ground truth tolerance for matching")
 
     # Define training parameters
-    parser.add_argument('--filter', type=int, default=1,
+    parser.add_argument('--filter', type=int, default=8,
                             help="Images to skip for training and/or inferencing")
     parser.add_argument('--epoch', type=int, default=4,
                             help="Number of epochs to train the model")
