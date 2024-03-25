@@ -6,7 +6,7 @@
 ![GitHub repo size](https://img.shields.io/github/repo-size/QVPR/VPRTempo.svg?style=flat-square)
 [![PyPI downloads](https://img.shields.io/pypi/dw/VPRTempo.svg)](https://pypistats.org/packages/vprtempo)
 
-This repository contains code for VPRTempo, a spiking neural network that uses temporally encoding to perform visual place recognition tasks. The network is based off of [BLiTNet](https://arxiv.org/pdf/2208.01204.pdf) and adapted to the [VPRSNN](https://github.com/QVPR/VPRSNN) framework. 
+This repository contains code for [VPRTempo](vprtempo.github.io), a spiking neural network that uses temporally encoding to perform visual place recognition tasks. The network is based off of [BLiTNet](https://arxiv.org/pdf/2208.01204.pdf) and adapted to the [VPRSNN](https://github.com/QVPR/VPRSNN) framework. 
 
 <p style="width: 50%; display: block; margin-left: auto; margin-right: auto">
   <img src="./assets/github_image.png" alt="VPRTempo method diagram"/>
@@ -31,15 +31,14 @@ To use VPRTempo, please follow the instructions below for installation and usage
 ## License & Citation
 This repository is licensed under the [MIT License](./LICENSE) 
 
-If you use our code, please cite the following [paper](https://arxiv.org/abs/2309.10225):
+If you use our code, please cite our IEEE ICRA [paper](https://arxiv.org/abs/2309.10225):
 ```
-@misc{hines2023vprtempo,
+@inproceedings{hines2024vprtempo,
       title={VPRTempo: A Fast Temporally Encoded Spiking Neural Network for Visual Place Recognition}, 
       author={Adam D. Hines and Peter G. Stratton and Michael Milford and Tobias Fischer},
-      year={2023},
-      eprint={2309.10225},
-      archivePrefix={arXiv},
-      primaryClass={cs.RO}
+      year={2024},
+      booktitle={2024 IEEE International Conference on Robotics and Automation (ICRA)}
+      
 }
 ```
 ## Installation and setup
@@ -106,9 +105,7 @@ For convenience, all data should be organised in the `./dataset` folder in the f
   |--winter
 ```
 ### Custom Datasets
-To define your own custom dataset to use with VPRTempo, you will need to follow the conventions for [PyTorch Datasets & Dataloaders](https://pytorch.org/tutorials/beginner/basics/data_tutorial.html). We provide a simple script `./dataset/custom_dataset.py` which will rename images in user defined directories and generate the necessary `.csv` file to load into VPRTempo. 
-
-To learn how to use custom datasets, please see the [CustomDatasets.ipynb](https://github.com/AdamDHines/VPRTempo-quant/tree/main/tutorials) tutorial.
+To define your own custom dataset to use with VPRTempo, you will need to follow the conventions for [PyTorch Datasets & Dataloaders](https://pytorch.org/tutorials/beginner/basics/data_tutorial.html). 
 
 ## Usage
 Running VPRTempo and VPRTempoQuant is handlded by `main.py`, which can be operated either through the command terminal or directly running the script. See below for more details.
