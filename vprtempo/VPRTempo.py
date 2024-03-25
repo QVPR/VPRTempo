@@ -131,11 +131,9 @@ class VPRTempo(nn.Module):
         for model in models:
             self.inferences.append(nn.Sequential(
                 model.feature_layer.w,
-                nn.Hardtanh(0, 0.9),
-                nn.ReLU(),
+                nn.Hardtanh(0,1.0),
                 model.output_layer.w,
-                nn.Hardtanh(0, 0.9),
-                nn.ReLU()
+                nn.Hardtanh(0,1.0)
             ))
             self.inferences[-1].to(torch.device(self.device))
         # Initiliaze the output spikes variable
