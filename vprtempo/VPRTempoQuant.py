@@ -134,10 +134,8 @@ class VPRTempoQuant(nn.Module):
             self.inferences.append(nn.Sequential(
                 model.feature_layer.w,
                 nn.Hardtanh(0, maxSpike),
-                nn.ReLU(),
                 model.output_layer.w,
-                nn.Hardtanh(0, maxSpike),
-                nn.ReLU()
+                nn.Hardtanh(0, maxSpike)
             ))
         # Initialize the tqdm progress bar
         pbar = tqdm(total=self.query_places,
