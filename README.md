@@ -9,7 +9,7 @@
 This repository contains code for [VPRTempo](https://vprtempo.github.io), a spiking neural network that uses temporally encoding to perform visual place recognition tasks. The network is based off of [BLiTNet](https://arxiv.org/pdf/2208.01204.pdf) and adapted to the [VPRSNN](https://github.com/QVPR/VPRSNN) framework. 
 
 <p style="width: 50%; display: block; margin-left: auto; margin-right: auto">
-  <img src="./assets/github_image.png" alt="VPRTempo method diagram"/>
+  <img src="./assets/vprtempo_example.gif" alt="VPRTempo method diagram"/>
 </p>
 
 VPRTempo is built on a [torch.nn](https://pytorch.org/tutorials/beginner/blitz/neural_networks_tutorial.html) framework and employs custom learning rules based on the temporal codes of spikes in order to train layer weights. 
