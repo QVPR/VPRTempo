@@ -9,8 +9,13 @@ def model_logger():
     Configure the model logger
     """   
     now = datetime.now()
-    output_folder = './vprtempo/output/' + now.strftime("%d%m%y-%H-%M-%S")
+    output_base_folder = './vprtempo/output/'
+    output_folder = output_base_folder + now.strftime("%d%m%y-%H-%M-%S")
+
+    # Create the base output folder if it does not exist
+    os.makedirs(output_base_folder, exist_ok=True)
     
+    # Create the specific output folder
     os.mkdir(output_folder)
     # Create the logger
     logger = logging.getLogger("VPRTempo")
@@ -56,8 +61,13 @@ def model_logger_quant():
     """   
 
     now = datetime.now()
-    output_folder = './vprtempo/output/' + now.strftime("%d%m%y-%H-%M-%S")
+    output_base_folder = './vprtempo/output/'
+    output_folder = output_base_folder + now.strftime("%d%m%y-%H-%M-%S")
+
+    # Create the base output folder if it does not exist
+    os.makedirs(output_base_folder, exist_ok=True)
     
+    # Create the specific output folder
     os.mkdir(output_folder)
     # Create the logger
     logger = logging.getLogger("VPRTempo")
