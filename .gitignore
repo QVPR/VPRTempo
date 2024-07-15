@@ -10,4 +10,4 @@ vprtempo/output/
 vprtempo/src/__pycache__/
 vprtempo/models/springfall_VPRTempo_IN3136_FN6272_DB500.pth
 vprtempo/models/springfall_VPRTempoQuant_IN3136_FN6272_DB500.pth
-tutorials/mats/
+tutorials/mats/1_BasicDemo/
