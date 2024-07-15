@@ -126,18 +126,8 @@ Running VPRTempo and VPRTempoQuant is handlded by `main.py`, which can be operat
 * The VPRTempo dependencies have been installed and/or the conda environment has been activated
 
 ### Pretrained models
-We provide two pretrained models, for `VPRTempo` and `VPRTempoQuant`, that have learned a 500 place sequence from two Nordland traversals (Spring & Fall) which can be used to inference with Summer or Winter. To get the pretrained models, please download them:
+We provide two pretrained models, for `VPRTempo` and `VPRTempoQuant`, that have learned a 500 place sequence from two Nordland traversals (Spring & Fall) which can be used to inference with Summer or Winter. To get the pretrained models, please download them [here](https://www.dropbox.com/scl/fi/ysfz7t7ek6h0pslwq9hd4/VPRTempo_pretrained_models.zip?rlkey=thg0rhn0hjsyov6zov63ni11o&st=nvimet71&dl=0).
 
-```console
-# Ensure your directory is set to VPRTempo
-cd ~/VPRTempo
-
-# If not already installed, install Git lfs
-git lfs install
-
-# Download the pretrained models
-git lfs pull
-```
 ### Run the inference network
 The `main.py` script handles running the inference network, there are two options:
 
