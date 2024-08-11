@@ -32,14 +32,14 @@ To use VPRTempo, please follow the instructions below for installation and usage
 ## License & Citation
 This repository is licensed under the [MIT License](./LICENSE) 
 
-If you use our code, please cite our IEEE ICRA [paper](https://arxiv.org/abs/2309.10225):
+If you use our code, please cite our IEEE ICRA [paper](https://ieeexplore.ieee.org/document/10610918):
 ```
 @inproceedings{hines2024vprtempo,
       title={VPRTempo: A Fast Temporally Encoded Spiking Neural Network for Visual Place Recognition}, 
       author={Adam D. Hines and Peter G. Stratton and Michael Milford and Tobias Fischer},
       year={2024},
-      booktitle={2024 IEEE International Conference on Robotics and Automation (ICRA)}
-      
+      pages={10200-10207},
+      booktitle={2024 IEEE International Conference on Robotics and Automation (ICRA)}     
 }
 ```
 ## Installation and setup
