@@ -111,10 +111,10 @@ In order to train and test on Oxford RobotCar, you will need to [register an acc
 
 ```console
 # Copy the orc_lists.txt from this repo into the RobotCarDataset-Scraper repo
-python scrape_mrgdatashare.py --choice_sensors stereo_left --choice_runs_file orc_list.txt --downloads_dir ~/Downloads --datasets_file datasets.csv --username USERNAME --password PASSWORD
+python scrape_mrgdatashare.py --choice_sensors stereo_left --choice_runs_file orc_list.txt --downloads_dir ~/VPRTempo/vprtempo/dataset/orc --datasets_file datasets.csv --username USERNAME --password PASSWORD
 ```
 
-Next, use our helper script `process_orc.py` to demosaic and denoise the downloaded images. We will use the `./vprtempo/dataset/orc.csv` file to only process the images we used in our paper as this can be a lengthy process. You'll need to download the [robotcar-dataset-sdk](https://github.com/ori-mrg/robotcar-dataset-sdk) repository and place the `process_orc.py` and `orc.csv` files into the `python` directory of the repository. Modify the `base_path` variable of `process_orc.py` to the location of your downloaded images.
+Next, use our helper script `process_orc.py` to demosaic and denoise the downloaded images. You'll need to download the [robotcar-dataset-sdk](https://github.com/ori-mrg/robotcar-dataset-sdk) repository and place the `process_orc.py` file into the `python` directory of the repository. Modify the `base_path` variable of `process_orc.py` to the location of your downloaded images.
 
 ```console
 # Navigate to python directory, ensure process_orc.py and orc.csv are in this directory
@@ -124,7 +124,7 @@ cd ~/robotcar-dataset-sdk/python
 python process_orc.py
 ```
 
-Once done, you can move the processed images into the `./VPRTempo/dataset/` folder and train and test the images.
+Once done, you can move the processed images into new folders `sun, dusk, rain` inside the `./VPRTempo/dataset/orc` folder and train and test the images.
 
 ```console
 # Train the Oxford RobotCar model
