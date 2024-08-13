@@ -89,7 +89,7 @@ conda create -n vprtempo -c pytorch -c nvidia python torchvision torchaudio pyto
 ```
 
 ## Datasets
-VPRTempo was developed to be simple to train and test a variety of datasets. Please see the information below about running a test with the Nordland traversal dataset and how to organize custom datasets.
+VPRTempo was developed to be simple to train and test a variety of datasets. Please see the information below about running a test with the Nordland and Oxford RobotCar datasets and how to organize custom datasets.
 
 ### Nordland
 VPRTempo was developed and tested using the [Nordland](https://webdiis.unizar.es/~jmfacil/pr-nordland/#download-dataset) traversal dataset. This software will work for either the full-resolution or down-sampled datasets, however our paper details the full-resolution datasets. Please also note that the first 20% of images from Nordland and Oxford Robotcar have been removed from the nordland.csv and orc.csv as detailed in our paper.
@@ -105,6 +105,35 @@ For convenience, all data should be organised in the `./dataset` folder in the f
   |--fall
   |--winter
 ```
+
+### Oxford RobotCar
+In order to train and test on Oxford RobotCar, you will need to [register an account](https://mrgdatashare.robots.ox.ac.uk/register/) to get access to download the dataset before proceeding. We use 3 traverses (sun 2015-08-12-15-04-18, dusk 2014-11-21-16- 07-03, and rain 2015-10-29-12-18-17) recorded from the `stero_left` camera, which can be downloaded using the [RobotCarDataset-Scraper](https://github.com/mttgdd/RobotCarDataset-Scraper) in the following way:
+
+```console
+# Copy the orc_lists.txt from this repo into the RobotCarDataset-Scraper repo
+python scrape_mrgdatashare.py --choice_sensors stereo_left --choice_runs_file orc_list.txt --downloads_dir ~/Downloads/sun --datasets_file datasets.csv --username USERNAME --password PASSWORD
+```
+
+Next, use our helper script `process_orc.py` to unzip, demosaic, and denoise the downloaded images. We will use the `./vprtempo/dataset/orc.csv` file to only process the images we used in our paper as this can be a lengthy process. You'll need to download the [robotcar-dataset-sdk](https://github.com/ori-mrg/robotcar-dataset-sdk) repository and place the `process_orc.py` and `orc.csv` files into the `python` directory of the repository.
+
+```console
+# Navigate to python directory, ensure process_orc.py and orc.csv are in this directory
+cd ~/robotcar-dataset-sdk/python
+
+# Run the demosaic and denoise
+python process_orc.py
+```
+
+Once done, you can move the processed images into the `./VPRTempo/dataset/` folder and train and test the images.
+
+```console
+# Train the Oxford RobotCar model
+python main.py --train_new_model --dataset orc --database_places 360 --database_dirs sun, rain
+
+# Test the trained model
+python main.py --dataset orc --database_places 360 --database_dirs sun, rain --query_places 360 --query_dir dusk --PR_curve --sim_mat
+```
+
 ### Custom Datasets
 To define your own custom dataset to use with VPRTempo, you will need to follow the conventions for [PyTorch Datasets & Dataloaders](https://pytorch.org/tutorials/beginner/basics/data_tutorial.html). We have included a convenient script `./vprtempo/src/create_data_csv.py` which will generate a .csv file that can be used to load custom datasets for training and inferencing. Simply modify the `dataset_name` variable to the folder containing your images.
 
