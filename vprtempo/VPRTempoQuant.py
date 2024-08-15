@@ -66,7 +66,7 @@ class VPRTempoQuant(nn.Module):
         self.dequant = DeQuantStub()
 
         # Set the dataset file
-        self.dataset_file = os.path.join('./vprtempo/dataset', self.dataset + '.csv')  
+        self.dataset_file = os.path.join('./vprtempo/dataset', f'{self.dataset}-{self.query_dir}' + '.csv')  
         self.query_dir = [dir.strip() for dir in self.query_dir.split(',')]
 
         # Layer dict to keep track of layer names and their order
@@ -133,9 +133,7 @@ class VPRTempoQuant(nn.Module):
         for model in models:
             self.inferences.append(nn.Sequential(
                 model.feature_layer.w,
-                nn.Hardtanh(0, maxSpike),
                 model.output_layer.w,
-                nn.Hardtanh(0, maxSpike)
             ))
         # Initialize the tqdm progress bar
         pbar = tqdm(total=self.query_places,
@@ -164,6 +162,8 @@ class VPRTempoQuant(nn.Module):
         # Create GT matrix
         GT = np.zeros((model.query_places,model.database_places), dtype=int)
         for n, ndx in enumerate(labels):
+            if model.skip != 0 and not model.query_places < model.database_places:
+                ndx = ndx - model.skip
             if model.filter !=1:
                 ndx = ndx//model.filter
             GT[n,ndx] = 1
@@ -172,6 +172,8 @@ class VPRTempoQuant(nn.Module):
         if model.GT_tolerance > 0:
             GTsoft = np.zeros((model.query_places,model.database_places), dtype=int)
             for n, ndx in enumerate(labels):
+                if model.skip != 0 and not model.query_places < model.database_places:
+                    ndx = ndx - model.skip
                 if model.filter !=1:
                     ndx = ndx//model.filter
                 GTsoft[n, ndx] = 1
@@ -282,39 +284,19 @@ def run_inference_quant(models, model_name):
     model = models[0]
     # Initialize the image transforms
     image_transform = ProcessImage(model.dims, model.patches)
-
-    # Determines if querying a subset of the database or the entire database
-    if model.query_places == model.database_places:
-        subset = False # Entire database
-    elif model.query_places < model.database_places:  
-        subset = True # Subset of the database
-    else:
-        raise ValueError("The number of query places must be less than or equal to the number of database places.")
     
     # Initialize the test dataset
     test_dataset = CustomImageDataset(annotations_file=model.dataset_file, 
                                       base_dir=model.data_dir,
                                       img_dirs=model.query_dir,
                                       transform=image_transform,
-                                      max_samples=model.database_places,
-                                      skip=model.filter)
+                                      max_samples=model.query_places,
+                                      filter=model.filter,
+                                      skip=model.skip)
     
-    # If using a subset of the database
-    if subset:
-        if model.shuffle: # For a randomized selection of database places
-             test_dataset = Subset(test_dataset, random.sample(range(len(test_dataset)), model.query_places))
-        else: # For a sequential selection of database places
-            indices = [i for i in range(model.database_places) if i % model.filter == 0]
-            # Limit to the desired number of queries
-            indices = indices[:model.query_places]
-            # Create the subset
-            test_dataset = Subset(test_dataset, indices)
-
-
     # Initialize the data loader
     test_loader = DataLoader(test_dataset, 
-                             batch_size=1, 
-                             shuffle=model.shuffle,
+                             batch_size=1,
                              num_workers=8,
                              persistent_workers=True)
 
