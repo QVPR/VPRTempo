@@ -137,7 +137,7 @@ class ProcessImage:
 
         # gamma correction
         mid = 0.5
-        mean = torch.mean(img)
+        mean = torch.mean(img.float())
         gamma = math.log(mid * 255) / math.log(mean)
         img = torch.pow(img, gamma).clip(0, 255)
         
@@ -158,26 +158,31 @@ class ProcessImage:
 
 class CustomImageDataset(Dataset):
     def __init__(self, annotations_file, base_dir, img_dirs, transform=None, target_transform=None, 
-                 skip=1, max_samples=None, test=True, img_range=None):
+                 filter=1, skip=0, max_samples=None, test=True, img_range=None):
         self.transform = transform
         self.target_transform = target_transform
-        self.skip = skip
+        self.filter = filter
         self.img_range = img_range
+        self.skip = skip
         
         # Load image labels from each directory, apply the skip and max_samples, and concatenate
         self.img_labels = []
-        for img_dir in img_dirs:
-
-            img_labels = pd.read_csv(annotations_file)
-            img_labels['file_path'] = img_labels.apply(lambda row: os.path.join(base_dir,img_dir, row.iloc[0]), axis=1)
+        # if annotations_file is a single file, convert it to a list
+        if not isinstance(annotations_file, list):
+            annotations_file = [annotations_file]
+        for idx, annotation in enumerate(annotations_file):
+            img_labels = pd.read_csv(annotation)
+            img_labels['file_path'] = img_labels.apply(lambda row: os.path.join(base_dir,img_dirs[idx], row.iloc[0]), axis=1)
             if self.img_range is not None:
                 img_labels = img_labels.iloc[self.img_range[0]:self.img_range[1]+1]
+            # Apply skip: start after the first 'skip' number of rows
+            if self.skip > 0:
+                img_labels = img_labels.iloc[self.skip:]
             # Select specific rows based on the skip parameter
-            img_labels = img_labels.iloc[::skip]
+            img_labels = img_labels.iloc[::filter]
             # Limit the number of samples to max_samples if specified
             if max_samples is not None:
                 img_labels = img_labels.iloc[:max_samples]
-            
             # Determine if the images being fed are training or testing
             if test:
                 self.img_labels = img_labels
