@@ -216,14 +216,14 @@ def parse_network(use_quantize=False, train_new_model=False):
                             help="Number of places to use for inferencing")
     parser.add_argument('--max_module', type=int, default=500,
                             help="Maximum number of images per module")
-    parser.add_argument('--database_dirs', type=str, default='spring, fall',
+    parser.add_argument('--database_dirs', type=str, default='spring,fall',
                             help="Directories to use for training")
     parser.add_argument('--query_dir', type=str, default='summer',
                             help="Directories to use for testing")
-    parser.add_argument('--shuffle', action='store_true',
-                            help="Shuffle input images during query")
     parser.add_argument('--GT_tolerance', type=int, default=1,
                             help="Ground truth tolerance for matching")
+    parser.add_argument('--skip', type=int, default=4799,
+                            help="Images to skip for training and/or inferencing")
 
     # Define training parameters
     parser.add_argument('--filter', type=int, default=8,

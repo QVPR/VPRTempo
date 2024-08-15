@@ -91,8 +91,10 @@ conda create -n vprtempo -c pytorch -c nvidia python torchvision torchaudio pyto
 ## Datasets
 VPRTempo was developed to be simple to train and test a variety of datasets. Please see the information below about running a test with the Nordland and Oxford RobotCar datasets and how to organize custom datasets.
 
+Please note that while we trained 3,300 places for Nordland and 450 for OxfordRobot car we only evaluated 2,700 and 360 places, respectively, ignoring the first 20% (see [Sect.4B Datasets](https://ieeexplore.ieee.org/document/10610918)). This can be modified with the `--skip` argument, which is set to 4799 by default for the pretrained Nordland models.
+
 ### Nordland
-VPRTempo was developed and tested using the [Nordland](https://webdiis.unizar.es/~jmfacil/pr-nordland/#download-dataset) traversal dataset. This software will work for either the full-resolution or down-sampled datasets, however our paper details the full-resolution datasets. Please also note that the first 20% of images from Nordland and Oxford Robotcar have been removed from the nordland.csv and orc.csv as detailed in our paper.
+VPRTempo was developed and tested using the [Nordland](https://webdiis.unizar.es/~jmfacil/pr-nordland/#download-dataset) traversal dataset. This software will work for either the full-resolution or down-sampled datasets, however our paper details the full-resolution datasets.
 
 To simplify first usage, we have set the defaults in `VPRTempo.py` to train and test on a small subset of Nordland data. We recommend [downloading Nordland](https://webdiis.unizar.es/~jmfacil/pr-nordland/#download-dataset) and using the `./src/nordland.py` script to unzip and organize the images into the correct file and naming structure.
 
@@ -122,16 +124,6 @@ cd ~/robotcar-dataset-sdk/python
 
 # Run the demosaic and denoise
 python process_orc.py
-```
-
-Once done, you can move the processed images into new folders `sun, dusk, rain` inside the `./VPRTempo/dataset/orc` folder and train and test the images.
-
-```console
-# Train the Oxford RobotCar model
-python main.py --train_new_model --dataset orc --database_places 360 --database_dirs sun, rain
-
-# Test the trained model
-python main.py --dataset orc --database_places 360 --database_dirs sun, rain --query_places 360 --query_dir dusk --PR_curve --sim_mat
 ```
 
 ### Custom Datasets

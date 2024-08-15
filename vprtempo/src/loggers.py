@@ -37,7 +37,7 @@ def model_logger():
     logger.info(' ╚████╔╝ ██║     ██║  ██║   ██║   ███████╗██║ ╚═╝ ██║██║     ╚██████╔╝')
     logger.info('  ╚═══╝  ╚═╝     ╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝     ╚═╝╚═╝      ╚═════╝ ')
     logger.info('-----------------------------------------------------------------------')
-    logger.info('Temporally Encoded Spiking Neural Network for Visual Place Recognition v1.1.0')
+    logger.info('Temporally Encoded Spiking Neural Network for Visual Place Recognition v1.1.6')
     logger.info('Queensland University of Technology, Centre for Robotics')
     logger.info('')
     logger.info('© 2023 Adam D Hines, Peter G Stratton, Michael Milford, Tobias Fischer')

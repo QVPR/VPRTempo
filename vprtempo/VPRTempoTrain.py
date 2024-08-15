@@ -56,7 +56,13 @@ class VPRTempoTrain(nn.Module):
         self.num_modules = num_modules
 
         # Set the dataset file
-        self.dataset_file = os.path.join('./vprtempo/dataset', self.dataset + '.csv')
+        fields = self.database_dirs.split(',')
+        if len(fields) > 1:
+            self.dataset_file = []
+            for field in fields:
+                self.dataset_file.append(os.path.join('./vprtempo/dataset', f'{self.dataset}-{field}' + '.csv'))
+        else:
+            self.dataset_file = os.path.join('./vprtempo/dataset', f'{self.dataset}-{self.database_dirs}' + '.csv')
 
         # Layer dict to keep track of layer names and their order
         self.layer_dict = {}
@@ -96,7 +102,7 @@ class VPRTempoTrain(nn.Module):
             dims=[self.feature, self.output],
             ip_rate=0.15,
             stdp_rate=0.005,
-            p=[0.25, 0.75],
+            p=[1.0, 1.0],
             spk_force=True,
             device=self.device
         )
@@ -278,7 +284,8 @@ def train_new_model(models, model_name):
                                     base_dir=models[0].data_dir,
                                     img_dirs=models[0].database_dirs,
                                     transform=image_transform,
-                                    skip=models[0].filter,
+                                    filter=models[0].filter,
+                                    skip=models[0].skip,
                                     test=False,
                                     img_range=img_range,
                                     max_samples=max_samples)
