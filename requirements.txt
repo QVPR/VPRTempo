@@ -4,4 +4,4 @@ numpy
 pandas
 tqdm
 prettytable
-scikit-learn
+matplotlib
