@@ -15,13 +15,13 @@ requirements = [
                 'pandas',
                 'tqdm',
                 'prettytable',
-                'scikit-learn'
+                'matplotlib'
                 ]
 
 # define the setup
 setup(
     name="VPRTempo",
-    version="1.1.6",
+    version="1.1.7",
     description='VPRTempo: A Fast Temporally Encoded Spiking Neural Network for Visual Place Recognition',
     long_description=long_description,
     long_description_content_type='text/markdown',

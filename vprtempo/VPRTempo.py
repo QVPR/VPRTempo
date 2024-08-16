@@ -290,8 +290,7 @@ def run_inference(models, model_name):
 
     # Initialize the data loader
     test_loader = DataLoader(test_dataset, 
-                             batch_size=1, 
-                             shuffle=model.shuffle,
+                             batch_size=1,
                              num_workers=8,
                              persistent_workers=True)
 
