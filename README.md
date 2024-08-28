@@ -185,7 +185,7 @@ python main.py --train_new_model --quantize
 Similarly above, if you wish to run the training through an IDE then change the `bool` flag for `train_new_model` to `True`.
 
 ## Tutorials
-We provide a series of Jupyter Notebook [tutorials](https://github.com/AdamDHines/VPRTempo-quant/tree/main/tutorials) that go through the basic operations and logic for VPRTempo and VPRTempoQuant. 
+We provide a series of Jupyter Notebook [tutorials](https://github.com/QVPR/VPRTempo/tree/main/tutorials) that go through the basic operations and logic for VPRTempo and VPRTempoQuant. 
 
 ## Issues, bugs, and feature requests
 If you encounter problems whilst running the code or if you have a suggestion for a feature or improvement, please report it as an [issue](https://github.com/QVPR/VPRTempo/issues).
