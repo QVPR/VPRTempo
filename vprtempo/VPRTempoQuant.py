@@ -36,7 +36,8 @@ import vprtempo.src.blitnet as bn
 
 from tqdm import tqdm
 from prettytable import PrettyTable
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
+from vprtempo.src.download import get_data_model
 from vprtempo.src.metrics import recallAtK, createPR
 from torch.ao.quantization import QuantStub, DeQuantStub
 from vprtempo.src.dataset import CustomImageDataset, ProcessImage
@@ -83,6 +84,9 @@ class VPRTempoQuant(nn.Module):
             self.output = out_dim_remainder
         else:
             self.output = out_dim
+
+        # set model name for default demo
+        self.demo = './vprtempo/models/springfall_VPRTempoQuant_IN3136_FN6272_DB500.pth'
 
         """
         Define trainable layers here
@@ -160,7 +164,7 @@ class VPRTempoQuant(nn.Module):
         out = np.reshape(np.array(out),(model.database_places,model.query_places))
 
         # Create GT matrix
-        GT = np.eye((model.database_places,model.query_places), dtype=int)
+        GT = np.eye(model.database_places,model.query_places)
 
         # Apply GT tolerance
         if self.GT_tolerance > 0:
@@ -260,7 +264,13 @@ class VPRTempoQuant(nn.Module):
         """
         Load pre-trained model and set the state dictionary keys.
         """
-        combined_state_dict = torch.load(model_path, map_location=self.device)
+        # check if model exists, download the demo data and model if defaults are set
+        if not os.path.exists(model_path):
+            if model_path == self.demo:
+                get_data_model()
+            else:
+                raise ValueError(f"Model path {model_path} does not exist.")
+        combined_state_dict = torch.load(model_path, map_location=self.device, weights_only=True)
 
         for i, model in enumerate(models):  # models_classes is a list of model classes
 
