@@ -222,7 +222,7 @@ def parse_network(use_quantize=False, train_new_model=False):
                             help="Directories to use for testing")
     parser.add_argument('--GT_tolerance', type=int, default=1,
                             help="Ground truth tolerance for matching")
-    parser.add_argument('--skip', type=int, default=4799,
+    parser.add_argument('--skip', type=int, default=0,
                             help="Images to skip for training and/or inferencing")
 
     # Define training parameters

@@ -48,6 +48,9 @@ def model_logger():
         logger.info('CUDA available: ' + str(torch.cuda.is_available()))
         current_device = torch.cuda.current_device()
         logger.info('Current device is: ' + str(torch.cuda.get_device_name(current_device)))
+    elif torch.backends.mps.is_available():
+        logger.info('MPS available: ' + str(torch.backends.mps.is_available()))
+        logger.info('Current device is: MPS')
     else:
         logger.info('CUDA available: ' + str(torch.cuda.is_available()))
         logger.info('Current device is: CPU')

@@ -157,36 +157,34 @@ class VPRTempoQuant(nn.Module):
         pbar.close()
 
         # Rehsape output spikes into a similarity matrix
-        out = np.reshape(np.array(out),(model.query_places,model.database_places))
+        out = np.reshape(np.array(out),(model.database_places,model.query_places))
 
         # Create GT matrix
-        GT = np.zeros((model.query_places,model.database_places), dtype=int)
-        for n, ndx in enumerate(labels):
-            if model.skip != 0 and not model.query_places < model.database_places:
-                ndx = ndx - model.skip
-            if model.filter !=1:
-                ndx = ndx//model.filter
-            GT[n,ndx] = 1
+        GT = np.eye((model.database_places,model.query_places), dtype=int)
 
-        # Create GT soft matrix
-        if model.GT_tolerance > 0:
-            GTsoft = np.zeros((model.query_places,model.database_places), dtype=int)
-            for n, ndx in enumerate(labels):
-                if model.skip != 0 and not model.query_places < model.database_places:
-                    ndx = ndx - model.skip
-                if model.filter !=1:
-                    ndx = ndx//model.filter
-                GTsoft[n, ndx] = 1
-                # Apply tolerance
-                for i in range(max(0, n - model.GT_tolerance), min(model.query_places, n + model.GT_tolerance + 1)):
-                    GTsoft[i, ndx] = 1
-        else:
-            GTsoft = None
+        # Apply GT tolerance
+        if self.GT_tolerance > 0:
+            # Get the number of rows and columns
+            num_rows, num_cols = GT.shape
+            
+            # Iterate over each column
+            for col in range(num_cols):
+                # Find the indices of rows where GT has a 1 in the current column
+                ones_indices = np.where(GT[:, col] == 1)[0]
+                
+                # For each index with a 1, set 1s in GTtol within the specified vertical distance
+                for row in ones_indices:
+                    # Determine the start and end rows, ensuring they are within bounds
+                    start_row = max(row - self.GT_tolerance, 0)
+                    end_row = min(row + self.GT_tolerance + 1, num_rows)  # +1 because upper bound is exclusive
+                    
+                    # Set the range in GTtol to 1
+                    GT[start_row:end_row, col] = 1
         
         # If user specified, generate a PR curve
         if model.PR_curve:
             # Create PR curve
-            P, R = createPR(out, GThard=GT, GTsoft=GTsoft, matching='single', n_thresh=100)
+            P, R = createPR(out, GT, matching='single', n_thresh=100)
             # Combine P and R into a list of lists
             PR_data = {
                     "Precision": P,
@@ -207,7 +205,7 @@ class VPRTempoQuant(nn.Module):
 
         if model.sim_mat:
             # Create a figure and a set of subplots
-            fig, axs = plt.subplots(1, 3, figsize=(15, 5))
+            fig, axs = plt.subplots(1, 2, figsize=(15, 5))
 
             # Plot each matrix using matshow
             cax1 = axs[0].matshow(out, cmap='viridis')
@@ -218,10 +216,6 @@ class VPRTempoQuant(nn.Module):
             fig.colorbar(cax2, ax=axs[1], shrink=0.8)
             axs[1].set_title('GT')
 
-            cax3 = axs[2].matshow(GTsoft, cmap='inferno')
-            fig.colorbar(cax3, ax=axs[2], shrink=0.8)
-            axs[2].set_title('GT-soft')
-
             # Adjust layout
             plt.tight_layout()
             plt.show()
@@ -231,7 +225,7 @@ class VPRTempoQuant(nn.Module):
         R = [] # Recall@N values
         # Calculate Recall@N
         for n in N:
-            R.append(round(recallAtK(out,GThard=GT,GTsoft=GTsoft,K=n),2))
+            R.append(round(recallAtK(out,GT,K=n),2))
         # Print the results
         table = PrettyTable()
         table.field_names = ["N", "1", "5", "10", "15", "20", "25"]
