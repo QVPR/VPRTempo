@@ -21,13 +21,10 @@ In this repository, we provide two networks:
 
 To use VPRTempo, please follow the instructions below for installation and usage.
 
-## :star: Update v1.1: What's new?
-  - Full integration of VPRTempo into torch.nn architecture
-  - Quantization Aware Training (QAT) enabled to train weights in int8 space
-  - Addition of tutorials in Jupyter Notebooks to learn how to use VPRTempo as well as explain the computational logic
-  - Simplification of weight operations, reducing to a single weight tensor - allowing positive and negative connections to change sign during training
-  - Easier dependency installation with PyPi/pip and conda
-  - And more!
+## :star: Update v1.1.8: What's new?
+  - Provided support for MPS Apple Silicon :green_apple:
+  - Minor bug fixes in evaluation metrics :bug:
+  - New auto-downloader for pre-trained models and Nordland image subsets for easier trialling :satellite:
 
 ## License & Citation
 This repository is licensed under the [MIT License](./LICENSE) 
@@ -81,22 +78,22 @@ conda create -n vprtempo -c conda-forge vprtempo
 conda create -n vprtempo -c conda-forge -c pytorch -c nvidia vprtempo pytorch-cuda cudatoolkit
 
 # Windows
-conda create -n vprtempo -c pytorch python pytorch torchvision torchaudio cpuonly prettytable tqdm numpy pandas matplotlib
+conda create -n vprtempo -c pytorch python pytorch torchvision torchaudio cpuonly prettytable tqdm numpy pandas matplotlib requests
 
 # Windows CUDA enabled
-conda create -n vprtempo -c pytorch -c nvidia python torchvision torchaudio pytorch-cuda=11.7 cudatoolkit prettytable tqdm numpy pandas matplotlib
+conda create -n vprtempo -c pytorch -c nvidia python torchvision torchaudio pytorch-cuda=11.7 cudatoolkit prettytable tqdm numpy pandas matplotlib requests
 
 ```
 
 ## Datasets
 VPRTempo was developed to be simple to train and test a variety of datasets. Please see the information below about running a test with the Nordland and Oxford RobotCar datasets and how to organize custom datasets.
 
-Please note that while we trained 3,300 places for Nordland and 450 for OxfordRobot car we only evaluated 2,700 and 360 places, respectively, ignoring the first 20% (see [Sect.4B Datasets](https://ieeexplore.ieee.org/document/10610918)). This can be modified with the `--skip` argument, which is set to 4799 by default for the pretrained Nordland models.
+Please note that while we trained 3,300 places for Nordland and 450 for OxfordRobot car we only evaluated 2,700 and 360 places, respectively, ignoring the first 20% (see [Sect.4B Datasets](https://ieeexplore.ieee.org/document/10610918)). 
 
 ### Nordland
-VPRTempo was developed and tested using the [Nordland](https://webdiis.unizar.es/~jmfacil/pr-nordland/#download-dataset) traversal dataset. This software will work for either the full-resolution or down-sampled datasets, however our paper details the full-resolution datasets.
+VPRTempo was developed and tested using the [Nordland](https://nrkbeta.no/2013/01/15/nordlandsbanen-minute-by-minute-season-by-season/) traversal dataset. To download the full dataset, please visit [this repository](https://huggingface.co/datasets/Somayeh-h/Nordland?row=0).
 
-To simplify first usage, we have set the defaults in `VPRTempo.py` to train and test on a small subset of Nordland data. We recommend [downloading Nordland](https://webdiis.unizar.es/~jmfacil/pr-nordland/#download-dataset) and using the `./src/nordland.py` script to unzip and organize the images into the correct file and naming structure.
+To simplify first usage, we have set the defaults in `main.py` to train and test on a small subset of Nordland data with pre-trained models, automatically downloaded on first usage (see Pre-trained models, below).
 
 For convenience, all data should be organised in the `./dataset` folder in the following way in order to train the network on multiple traversals of the same location.
 
@@ -106,6 +103,16 @@ For convenience, all data should be organised in the `./dataset` folder in the f
   |--spring
   |--fall
   |--winter
+```
+
+To replicate the results in our paper, please run the following.
+
+```console
+# Train the Nordland model
+python main.py --train_new_model --database_places 3300 --database_dirs spring,fall --skip 0 --max_module 1100 --dataset nordland --dims 28,28 --patches 7 --filter 7
+
+# Test the Nordland model
+python main.py --database_places 3300 --database_dirs spring,fall --skip 7999 --dataset nordland --dims 28,28 --patches 7 --filter 7 --query_dir summer --query_places 2700 --sim_mat --max_module 1100
 ```
 
 ### Oxford RobotCar
@@ -124,6 +131,16 @@ cd ~/robotcar-dataset-sdk/python
 
 # Run the demosaic and denoise
 python process_orc.py
+```
+
+To replicate the results in our paper, please run the following.
+
+```console
+# Train the ORC model
+python main.py --train_new_model --database_places 450 --database_dirs sun,rain --skip 0 --max_module 450 --dataset orc --dims 28,28 --patches 7 --filter 7
+
+# Test the ORC model
+python main.py --database_places 450 --database_dirs sun,rain --skip 630 --dataset orc --dims 28,28 --patches 7 --filter 7 --query_dir dusk --query_places 360 --sim_mat --max_module 450
 ```
 
 ### Custom Datasets
@@ -147,7 +164,7 @@ Running VPRTempo and VPRTempoQuant is handlded by `main.py`, which can be operat
 * The VPRTempo dependencies have been installed and/or the conda environment has been activated
 
 ### Pretrained models
-We provide two pretrained models, for `VPRTempo` and `VPRTempoQuant`, that have learned a 500 place sequence from two Nordland traversals (Spring & Fall) which can be used to inference with Summer or Winter. To get the pretrained models, please download them [here](https://www.dropbox.com/scl/fi/ysfz7t7ek6h0pslwq9hd4/VPRTempo_pretrained_models.zip?rlkey=thg0rhn0hjsyov6zov63ni11o&st=nvimet71&dl=0).
+We provide two pretrained models, for `VPRTempo` and `VPRTempoQuant`, that have learned a 500 place sequence from two Nordland traversals (Spring & Fall) which can be used to inference with Summer or Winter. To get the pre-trained models and Nordland images, simply run either inference network (below) which will automatically download and sort the models and images into the VPRTempo folder.
 
 ### Run the inference network
 The `main.py` script handles running the inference network, there are two options:
@@ -160,7 +177,7 @@ python main.py
   <img src="./assets/main_example.gif" alt="Example of the base VPRTempo networking running"/>
 </p>
 
-To run the quantized network, parse the `--quantize` argument.
+To run the quantized network, parse the `--quantize` argument. (Please note, MPS is not currently supported with PyTorch QAT)
 ```console
 python main.py --quantize
 ```
@@ -181,8 +198,6 @@ python main.py --train_new_model --quantize
 <p style="width: 100%; display: block; margin-left: auto; margin-right: auto">
   <img src="./assets/train_example.gif" alt="Example of the training VPRTempo networking running"/>
 </p>
-
-Similarly above, if you wish to run the training through an IDE then change the `bool` flag for `train_new_model` to `True`.
 
 ## Tutorials
 We provide a series of Jupyter Notebook [tutorials](https://github.com/QVPR/VPRTempo/tree/main/tutorials) that go through the basic operations and logic for VPRTempo and VPRTempoQuant. 
