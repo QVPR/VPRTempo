@@ -31,7 +31,7 @@ setup(
     url='https://github.com/QVPR/VPRTempo',
     license='MIT',
     install_requires=requirements,
-    python_requires='>=3.6',
+    python_requires='>=3.6, <3.13', 
     classifiers=[
         #   3 - Alpha
         #   4 - Beta
@@ -49,6 +49,9 @@ setup(
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8',
         'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.11',
+        'Programming Language :: Python :: 3.12',
       ],
     packages=find_packages(),
     keywords=['python', 'place recognition', 'spiking neural networks',
