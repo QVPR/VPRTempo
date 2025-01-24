@@ -199,7 +199,7 @@ def initialize_and_run_model(args,dims):
             # Run the inference model
             run_inference(models, model_name)
 
-def parse_network(use_quantize=False, train_new_model=False):
+def parse_network():
     '''
     Define the base parameter parser (configurable by the user)
     '''
@@ -220,9 +220,9 @@ def parse_network(use_quantize=False, train_new_model=False):
                             help="Directories to use for training")
     parser.add_argument('--query_dir', type=str, default='summer',
                             help="Directories to use for testing")
-    parser.add_argument('--GT_tolerance', type=int, default=1,
+    parser.add_argument('--GT_tolerance', type=int, default=0,
                             help="Ground truth tolerance for matching")
-    parser.add_argument('--skip', type=int, default=4799,
+    parser.add_argument('--skip', type=int, default=0,
                             help="Images to skip for training and/or inferencing")
 
     # Define training parameters
@@ -249,14 +249,6 @@ def parse_network(use_quantize=False, train_new_model=False):
     parser.add_argument('--sim_mat', action='store_true',
                             help="Flag to plot the similarity matrix, GT, and GTsoft")
     
-    # If the function is called with specific arguments, override sys.argv
-    if use_quantize or train_new_model:
-        sys.argv = ['']
-        if use_quantize:
-            sys.argv.append('--quantize')
-        if train_new_model:
-            sys.argv.append('--train_new_model')
-
     # Output base configuration
     args = parser.parse_args()
     dims = [int(x) for x in args.dims.split(",")]
@@ -265,6 +257,4 @@ def parse_network(use_quantize=False, train_new_model=False):
     initialize_and_run_model(args,dims)
 
 if __name__ == "__main__":
-    # User input to determine if using quantized network or to train new model 
-    parse_network(use_quantize=False, 
-                  train_new_model=False)
+    parse_network()

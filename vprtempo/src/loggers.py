@@ -37,7 +37,7 @@ def model_logger():
     logger.info(' ╚████╔╝ ██║     ██║  ██║   ██║   ███████╗██║ ╚═╝ ██║██║     ╚██████╔╝')
     logger.info('  ╚═══╝  ╚═╝     ╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝     ╚═╝╚═╝      ╚═════╝ ')
     logger.info('-----------------------------------------------------------------------')
-    logger.info('Temporally Encoded Spiking Neural Network for Visual Place Recognition v1.1.7')
+    logger.info('Temporally Encoded Spiking Neural Network for Visual Place Recognition v1.1.8')
     logger.info('Queensland University of Technology, Centre for Robotics')
     logger.info('')
     logger.info('© 2023 Adam D Hines, Peter G Stratton, Michael Milford, Tobias Fischer')
@@ -48,6 +48,9 @@ def model_logger():
         logger.info('CUDA available: ' + str(torch.cuda.is_available()))
         current_device = torch.cuda.current_device()
         logger.info('Current device is: ' + str(torch.cuda.get_device_name(current_device)))
+    elif torch.backends.mps.is_available():
+        logger.info('MPS available: ' + str(torch.backends.mps.is_available()))
+        logger.info('Current device is: MPS')
     else:
         logger.info('CUDA available: ' + str(torch.cuda.is_available()))
         logger.info('Current device is: CPU')
@@ -90,7 +93,7 @@ def model_logger_quant():
     logger.info(' ╚████╔╝ ██║     ██║  ██║   ██║   ███████╗██║ ╚═╝ ██║██║     ╚██████╔╝      ╚██████╔╝╚██████╔╝██║  ██║██║ ╚████║   ██║')   
     logger.info('  ╚═══╝  ╚═╝     ╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝     ╚═╝╚═╝      ╚═════╝        ╚══▀▀═╝  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝')                                                                                                                     
     logger.info('-----------------------------------------------------------------------')
-    logger.info('Temporally Encoded Spiking Neural Network for Visual Place Recognition v1.1.7')
+    logger.info('Temporally Encoded Spiking Neural Network for Visual Place Recognition v1.1.8')
     logger.info('Queensland University of Technology, Centre for Robotics')
     logger.info('')
     logger.info('© 2023 Adam D Hines, Peter G Stratton, Michael Milford, Tobias Fischer')

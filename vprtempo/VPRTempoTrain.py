@@ -48,8 +48,11 @@ class VPRTempoTrain(nn.Module):
         for arg in vars(args):
             setattr(self, arg, getattr(args, arg))
         setattr(self, 'dims', dims)
+        # Set the device
         if torch.cuda.is_available():
             self.device = "cuda:0"
+        elif torch.backends.mps.is_available():
+            self.device = "mps"
         else:
             self.device = "cpu"
         self.logger = logger
