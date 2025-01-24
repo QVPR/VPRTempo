@@ -15,13 +15,14 @@ requirements = [
                 'pandas',
                 'tqdm',
                 'prettytable',
-                'matplotlib'
+                'matplotlib',
+                'requests'
                 ]
 
 # define the setup
 setup(
     name="VPRTempo",
-    version="1.1.7",
+    version="1.1.8",
     description='VPRTempo: A Fast Temporally Encoded Spiking Neural Network for Visual Place Recognition',
     long_description=long_description,
     long_description_content_type='text/markdown',
@@ -30,7 +31,7 @@ setup(
     url='https://github.com/QVPR/VPRTempo',
     license='MIT',
     install_requires=requirements,
-    python_requires='>=3.6',
+    python_requires='>=3.6, <3.13', 
     classifiers=[
         #   3 - Alpha
         #   4 - Beta
@@ -48,6 +49,9 @@ setup(
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8',
         'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.11',
+        'Programming Language :: Python :: 3.12',
       ],
     packages=find_packages(),
     keywords=['python', 'place recognition', 'spiking neural networks',

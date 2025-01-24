@@ -5,3 +5,4 @@ pandas
 tqdm
 prettytable
 matplotlib
+requests
