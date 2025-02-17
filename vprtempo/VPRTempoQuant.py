@@ -154,17 +154,25 @@ class VPRTempoQuant(nn.Module):
             # Pass through previous layers if they exist
             spikes = self.forward(spikes)
             # Add output spikes to list
-            out.append(spikes.detach().cpu().tolist())
+            out.append(spikes.detach().cpu())
             pbar.update(1)
 
         # Close the tqdm progress bar
         pbar.close()
-
         # Rehsape output spikes into a similarity matrix
-        out = np.reshape(np.array(out),(model.database_places,model.query_places))
+        out = torch.stack(out, dim=2)
+        out = out.squeeze(0).numpy()
+       
+        if self.skip != 0:
+            GT = np.zeros((model.database_places, model.query_places))
+            skip = model.skip // model.filter
+            # Create an array of indices for the query dimension
+            query_indices = np.arange(model.query_places)
 
-        # Create GT matrix
-        GT = np.eye(model.database_places,model.query_places)
+            # Set the ones on the diagonal starting at row `skip`
+            GT[skip + query_indices, query_indices] = 1
+        else:
+            GT = np.eye(model.database_places, model.query_places)
 
         # Apply GT tolerance
         if self.GT_tolerance > 0:
