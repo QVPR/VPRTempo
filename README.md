@@ -109,10 +109,10 @@ To replicate the results in our paper, please run the following.
 
 ```console
 # Train the Nordland model
-python main.py --train_new_model --database_places 3300 --database_dirs spring,fall --skip 0 --max_module 1100 --dataset nordland --dims 28,28 --patches 7 --filter 7
+python main.py --train_new_model --database_places 3300 --database_dirs spring,fall --skip 0 --max_module 1100 --dataset nordland --dims 28,28 --patches 7 --filter 8
 
 # Test the Nordland model
-python main.py --database_places 3300 --database_dirs spring,fall --skip 7999 --dataset nordland --dims 28,28 --patches 7 --filter 7 --query_dir summer --query_places 2700 --sim_mat --max_module 1100
+python main.py --database_places 3300 --database_dirs spring,fall --skip 4800 --dataset nordland --dims 28,28 --patches 7 --filter 8 --query_dir summer --query_places 2700 --sim_mat --max_module 1100
 ```
 
 ### Oxford RobotCar
