@@ -21,10 +21,8 @@ In this repository, we provide two networks:
 
 To use VPRTempo, please follow the instructions below for installation and usage.
 
-## :star: Update v1.1.8: What's new?
-  - Provided support for MPS Apple Silicon :green_apple:
-  - Minor bug fixes in evaluation metrics :bug:
-  - New auto-downloader for pre-trained models and Nordland image subsets for easier trialling :satellite:
+## :star: Update v1.1.9: What's new?
+  - Minor bug fixes for ground truth and similarity matrix generation for image skipping :bug:
 
 ## License & Citation
 This repository is licensed under the [MIT License](./LICENSE) 
