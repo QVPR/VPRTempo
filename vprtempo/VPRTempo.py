@@ -212,6 +212,8 @@ class VPRTempo(nn.Module):
             plt.title('Precision-Recall Curve')
             plt.show()
 
+            plt.close()
+
         if model.sim_mat:
             # Create a figure and a set of subplots
             fig, axs = plt.subplots(1, 2, figsize=(15, 5))
@@ -228,6 +230,8 @@ class VPRTempo(nn.Module):
             # Adjust layout
             plt.tight_layout()
             plt.show()
+
+            plt.close()
 
         # Recall@N
         N = [1,5,10,15,20,25] # N values to calculate

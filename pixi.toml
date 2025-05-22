@@ -1,0 +1,68 @@
+[project]
+name = "vprtempo"
+version = "1.1.10"
+description = "Temporally encoded spiking neural network for fast visual place recognition"
+authors = ["Adam D Hines <adam.hines@qut.edu.au>", "Peter G Stratton <pete@neurofire.ai>", "Michael Milford <michael.milford@qut.edu.au", "Tobias Fischer <tobias.fischer@qut.edu.au>"]
+channels = ["conda-forge", "pytorch"]
+platforms = ["linux-64", "osx-arm64", "win-64"]
+preview = ["pixi-build"]
+
+[feature.cuda]
+platforms = ["linux-64"]
+system-requirements = {cuda = "12"}
+
+[dependencies]
+python = ">=3.6,<3.13"
+pytorch = ">=2.4.0"
+torchvision = ">=0.19.0"
+numpy = ">=1.26.2,<2"
+pandas = ">=2.2.2"
+tqdm = ">=4.66.5"
+prettytable = ">=3.11.0"
+matplotlib-base = ">=3.9.2"
+requests = ">=2.32.3"
+
+[feature.cuda.dependencies]
+cuda-version = "12.*"
+pytorch-gpu = "*"
+cuda-cudart-dev = "*"
+cuda-crt = "*"
+cudnn = "*"
+libcusparse-dev = "*"
+cuda-driver-dev = "*"
+cuda-nvcc = "*"
+cuda-nvrtc-dev = "*"
+cuda-nvtx-dev = "*"
+cuda-nvml-dev = "*"
+cuda-profiler-api = "*"
+cusparselt = "*"
+libcublas-dev = "*"
+libcudss-dev = "*"
+libcufile-dev = "*"
+libcufft-dev = "*"
+libcurand-dev = "*"
+libcusolver-dev = "*"
+
+[environments]
+cuda = ["cuda"]
+
+[tasks]
+# run demo - downloads pretrained models and Nordland dataset
+demo = {cmd = "pixi run --frozen python main.py --PR_curve --sim_mat"}
+
+# run the evaluation networks
+eval = {cmd = "pixi run python main.py"}
+eval_quant = {cmd = "pixi run python main.py --quantize"}
+
+# train network
+train = {cmd = "pixi run python main.py --train_new_model"}
+train_quant = {cmd = "pixi run python main.py --train_new_model --quantize"}
+
+# replicate conference proceedings results
+nordland_train = {cmd = "pixi run python main.py --train_new_model --database_places 3300 --database_dirs spring,fall --skip 0 --max_module 1100 --dataset nordland --dims 28,28 --patches 7 --filter 8"}
+nordland_eval = {cmd = "pixi run python main.py --database_places 3300 --database_dirs spring,fall --skip 4800 --dataset nordland --dims 28,28 --patches 7 --filter 8 --query_dir summer --query_places 2700 --sim_mat --max_module 1100"}
+oxford_train = {cmd = "pixi run python main.py --train_new_model --dataset orc --database_places 450 --database_dirs sun,rain --skip 0 --max_module 450 --dataset orc --dims 28,28 --patches 7 --filter 7"}
+oxford_eval = {cmd = "python main.py --dataset orc --database_places 450 --database_dirs sun,rain --skip 630 --dataset orc --dims 28,28 --patches 7 --filter 7 --query_dir dusk --query_places 360 --sim_mat --max_module 450"}
+
+# helper functions for datasets
+scrape_oxford = {cmd = "python scrape_mrgdatashare.py --choice_sensors stereo_left --choice_runs_file orc_list.txt --downloads_dir ~/VPRTempo/vprtempo/dataset --datasets_file datasets.csv"}
