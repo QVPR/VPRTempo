@@ -6,3 +6,4 @@ tqdm
 prettytable
 matplotlib
 requests
+imageio

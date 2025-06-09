@@ -1,10 +1,10 @@
 # VPRTempo - A Temporally Encoded Spiking Neural Network for Visual Place Recognition
 ![PyTorch](https://img.shields.io/badge/PyTorch-%23EE4C2C.svg?style=for-the-badge&logo=PyTorch&logoColor=white)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
+[![Pixi Badge](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/prefix-dev/pixi/main/assets/badge/v0.json)](https://pixi.sh)
 [![QUT Centre for Robotics](https://img.shields.io/badge/collection-QUT%20Robotics-%23043d71?style=flat-square)](https://qcr.ai)
 [![stars](https://img.shields.io/github/stars/QVPR/VPRTempo.svg?style=flat-square)](https://github.com/QVPR/VPRTempo/stargazers)
 [![Downloads](https://static.pepy.tech/badge/vprtempo)](https://pepy.tech/project/vprtempo)
-[![Pixi Badge](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/prefix-dev/pixi/main/assets/badge/v0.json)](https://pixi.sh)
 [![Conda Version](https://img.shields.io/conda/vn/conda-forge/vprtempo.svg)](https://anaconda.org/conda-forge/vprtempo)
 [![GitHub repo size](https://img.shields.io/github/repo-size/QVPR/VPRTempo.svg?style=flat-square)](./README.md)
 
@@ -65,6 +65,15 @@ For training and evaluation of the 8-bit quantized model, run the following in y
 pixi run train_quant
 pixi run eval_quant
 ```
+
+### Alternative dependency install
+Dependencies for VPRTempo can alternatively be installed in a conda environment. We recommend [micromamba](https://mamba.readthedocs.io/en/latest/installation/micromamba-installation.html) and run the following in your command terminal:
+
+```console
+micromamba create -n vprtempo -c conda-forge vprtempo
+micromamba activate vprtempo
+```
+_Note: Whilst we do have a PyPi package, we do not recommend using pip to install dependencies for VPRTempo._
 
 ## Datasets
 VPRTempo was developed to be simple to train and test a variety of datasets. Please see the information below about recreating our results for the Nordland and Oxford RobotCar datasets and setting up custom datasets.
@@ -128,10 +137,6 @@ This repository is licensed under the [MIT License](./LICENSE). If you use our c
       booktitle={2024 IEEE International Conference on Robotics and Automation (ICRA)}     
 }
 ```
-
-## Documentation
-
-For more detailed information on usage, please visit the [documentation]().
 
 ## Tutorials
 We provide a series of Jupyter Notebook [tutorials](https://github.com/QVPR/VPRTempo/tree/main/tutorials) that go through the basic operations and logic for VPRTempo and VPRTempoQuant. 
