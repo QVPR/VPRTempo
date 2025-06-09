@@ -249,6 +249,10 @@ def parse_network():
     parser.add_argument('--sim_mat', action='store_true',
                             help="Flag to plot the similarity matrix, GT, and GTsoft")
     
+    # Run the demo
+    parser.add_argument('--demo', action='store_true',
+                            help="Flag to run the demo script")
+    
     # Output base configuration
     args = parser.parse_args()
     dims = [int(x) for x in args.dims.split(",")]

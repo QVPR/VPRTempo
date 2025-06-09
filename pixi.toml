@@ -21,6 +21,7 @@ tqdm = ">=4.66.5"
 prettytable = ">=3.11.0"
 matplotlib-base = ">=3.9.2"
 requests = ">=2.32.3"
+imageio = "*"
 
 [feature.cuda.dependencies]
 cuda-version = "12.*"
@@ -48,7 +49,7 @@ cuda = ["cuda"]
 
 [tasks]
 # run demo - downloads pretrained models and Nordland dataset
-demo = {cmd = "pixi run --frozen python main.py --PR_curve --sim_mat"}
+demo = {cmd = "pixi run --frozen python main.py --PR_curve --sim_mat --demo"}
 
 # run the evaluation networks
 eval = {cmd = "pixi run python main.py"}

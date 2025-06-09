@@ -34,6 +34,7 @@ import matplotlib.pyplot as plt
 import vprtempo.src.blitnet as bn
 
 from tqdm import tqdm
+from vprtempo.src.demo import demo
 from prettytable import PrettyTable
 from torch.utils.data import DataLoader
 from vprtempo.src.download import get_data_model
@@ -206,15 +207,16 @@ class VPRTempo(nn.Module):
             with open(full_path, 'w') as file:
                 json.dump(PR_data, file) 
             # Plot PR curve
-            plt.plot(R,P)    
-            plt.xlabel('Recall')
-            plt.ylabel('Precision')
-            plt.title('Precision-Recall Curve')
-            plt.show()
+            if not model.demo:
+                plt.plot(R,P)    
+                plt.xlabel('Recall')
+                plt.ylabel('Precision')
+                plt.title('Precision-Recall Curve')
+                plt.show()
 
-            plt.close()
+                plt.close()
 
-        if model.sim_mat:
+        if model.sim_mat and not model.demo:
             # Create a figure and a set of subplots
             fig, axs = plt.subplots(1, 2, figsize=(15, 5))
 
@@ -232,13 +234,21 @@ class VPRTempo(nn.Module):
             plt.show()
 
             plt.close()
+        
 
         # Recall@N
         N = [1,5,10,15,20,25] # N values to calculate
-        R = [] # Recall@N values
+        RN = [] # Recall@N values
         # Calculate Recall@N
         for n in N:
-            R.append(round(recallAtK(out, GT, K=n),2))
+            RN.append(round(recallAtK(out, GT, K=n),2))
+
+        if model.demo:
+            # Run the demo with the output spikes and ground truth
+            demo(model.data_dir, model.query_dir[0], model.database_dirs[0], out, GT, N, RN, R, P)
+
+            return
+
         # Print the results
         table = PrettyTable()
         table.field_names = ["N", "1", "5", "10", "15", "20", "25"]
