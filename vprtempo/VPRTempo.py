@@ -207,7 +207,7 @@ class VPRTempo(nn.Module):
             with open(full_path, 'w') as file:
                 json.dump(PR_data, file) 
             # Plot PR curve
-            if not model.demo:
+            if not model.run_demo:
                 plt.plot(R,P)    
                 plt.xlabel('Recall')
                 plt.ylabel('Precision')
@@ -216,7 +216,7 @@ class VPRTempo(nn.Module):
 
                 plt.close()
 
-        if model.sim_mat and not model.demo:
+        if model.sim_mat and not model.run_demo:
             # Create a figure and a set of subplots
             fig, axs = plt.subplots(1, 2, figsize=(15, 5))
 
@@ -243,16 +243,15 @@ class VPRTempo(nn.Module):
         for n in N:
             RN.append(round(recallAtK(out, GT, K=n),2))
 
-        if model.demo:
+        if model.run_demo:
             # Run the demo with the output spikes and ground truth
             demo(model.data_dir, model.query_dir[0], model.database_dirs[0], out, GT, N, RN, R, P)
-
             return
 
         # Print the results
         table = PrettyTable()
         table.field_names = ["N", "1", "5", "10", "15", "20", "25"]
-        table.add_row(["Recall", R[0], R[1], R[2], R[3], R[4], R[5]])
+        table.add_row(["Recall", RN[0], RN[1], RN[2], RN[3], RN[4], RN[5]])
         self.logger.info(table)
 
     def forward(self, spikes):

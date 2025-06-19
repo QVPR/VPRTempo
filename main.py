@@ -250,7 +250,7 @@ def parse_network():
                             help="Flag to plot the similarity matrix, GT, and GTsoft")
     
     # Run the demo
-    parser.add_argument('--demo', action='store_true',
+    parser.add_argument('--run_demo', action='store_true',
                             help="Flag to run the demo script")
     
     # Output base configuration

@@ -49,7 +49,7 @@ cuda = ["cuda"]
 
 [tasks]
 # run demo - downloads pretrained models and Nordland dataset
-demo = {cmd = "pixi run --frozen python main.py --PR_curve --sim_mat --demo"}
+demo = {cmd = "pixi run --frozen python main.py --PR_curve --sim_mat --run_demo"}
 
 # run the evaluation networks
 eval = {cmd = "pixi run python main.py"}
