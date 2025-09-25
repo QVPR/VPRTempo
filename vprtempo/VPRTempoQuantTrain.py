@@ -290,8 +290,8 @@ def train_new_model_quant(models, model_name):
             train_loader = DataLoader(train_dataset, 
                                     batch_size=1, 
                                     shuffle=True,
-                                    num_workers=8,
-                                    persistent_workers=True)
+                                    num_workers=4,
+                                    persistent_workers=False)
             # Train the layers
             model.train_model(train_loader, layer, model, i, prev_layers=trained_layers)
         trained_layers.append(layer_name) 

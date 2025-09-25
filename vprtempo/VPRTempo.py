@@ -317,10 +317,17 @@ def run_inference(models, model_name):
                                       skip=model.skip)
 
     # Initialize the data loader
+    # If apple MPS, num_workers must be 0
+    if model.device == "mps":
+        num_workers = 0
+        persistent_workers = False
+    else:
+        num_workers = 4
+        persistent_workers = False
     test_loader = DataLoader(test_dataset, 
                              batch_size=1,
-                             num_workers=4,
-                             persistent_workers=True)
+                             num_workers=num_workers,
+                             persistent_workers=persistent_workers)
 
     # Load the model
     model.load_model(models, os.path.join('./vprtempo/models', model_name))

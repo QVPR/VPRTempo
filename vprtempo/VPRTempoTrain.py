@@ -293,11 +293,18 @@ def train_new_model(models, model_name):
                                     img_range=img_range,
                                     max_samples=max_samples)
             # Initialize the data loader
+            # If apple MPS, num_workers must be 0
+            if model.device == "mps":
+                num_workers = 0
+                persistent_workers = False
+            else:
+                num_workers = 4
+                persistent_workers = False
             train_loader = DataLoader(train_dataset, 
                                     batch_size=1, 
                                     shuffle=True,
-                                    num_workers=8,
-                                    persistent_workers=True)
+                                    num_workers=num_workers,
+                                    persistent_workers=persistent_workers)
             # Train the layers
             model.train_model(train_loader, layer, model, i, prev_layers=trained_layers)
             model.to(torch.device("cpu"))

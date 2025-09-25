@@ -309,8 +309,8 @@ def run_inference_quant(models, model_name):
     # Initialize the data loader
     test_loader = DataLoader(test_dataset, 
                              batch_size=1,
-                             num_workers=8,
-                             persistent_workers=True)
+                             num_workers=4,
+                             persistent_workers=False)
 
     # Load the model
     model.load_model(models, os.path.join('./vprtempo/models', model_name))
