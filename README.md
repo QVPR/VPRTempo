@@ -23,9 +23,8 @@ In this repository, we provide two networks:
 
 To use VPRTempo, please follow the instructions below for installation and usage.
 
-## :star: Update v1.1.10: What's new?
-  - Adding [pixi](https://prefix.dev/) for easier setup and reproducibility :rocket:
-  - Fixed repo size issue for a more compact download :chart_with_downwards_trend:
+## :star: Update v1.1.11: What's new?
+  - Fixed minor bug in the DataLoader that was causing VPRTempo to hang 🐛
 
 ## Quick start
 For simplicity and reproducibility, VPRTempo uses [pixi](https://prefix.dev/) to install and manage dependencies. If you do not already have pixi installed, run the following in your command terminal:
